@@ -1,0 +1,30 @@
+{
+  "summary": "Atelier MVP fully tested. Backend: 8/8 pytest tests pass against the public preview URL (root, idempotent seed, clients list w/o _id, create+get client, NL parse via Claude Sonnet 4.5 returning IST +05:30 future design_call, event creation with mock meet_link + 3 reminders, events range, invoice item create/update/delete with persistence verification, share token + public HTML containing client name). Frontend (mobile viewport 390x844): Today screen renders heading + schedule-input + parse-button; parsing 'Schedule a design call for Anaïs at 6pm IST on coming Wednesday' produced a valid schedule-preview with a CONFIRM & SCHEDULE button. Calendar tab shows month label 'June 2026', 4 mode chips (Design Call, Measurement Call, Sending Pieces, Personal) and a full day grid; chips toggle and day cells select. Clients tab lists seeded + newly-created clients (TEST_UI_Client visible after fab-create-client → field-name → save-client flow). Client detail screen shows Measurements, Design Sheets (Upload PDF) and Invoice (Add item) sections. Mocked Resend + mock meet link behave as expected (HTTP 2xx, console log).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Today preview", "issue": "Confirm button testID is 'confirm-event' but spec referenced 'confirm-event-button'. Functionality works; naming mismatch only.", "testID": "confirm-event", "priority": "LOW"},
+      {"component": "Calendar chips", "issue": "Chips testID is 'mode-toggle-${key}' but spec referenced 'mode-chip-*'. Functionally toggling works.", "testID": "mode-toggle-design_call", "priority": "LOW"},
+      {"component": "Calendar day cells", "issue": "Day cells testID is 'day-${iso}' but spec referenced 'day-cell-*'. Tap-to-select works.", "testID": "day-2026-06-27", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_atelier_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: align testIDs with original spec for consistency (rename 'confirm-event' → 'confirm-event-button', 'mode-toggle-*' → 'mode-chip-*', 'day-*' → 'day-cell-*'). Functionality is correct; only naming differs.",
+    "Minor backend lint: two pytest tests have unused `return` values (warnings only, not failures)."
+  ],
+  "critical_code_review_comments": [
+    "server.py uses asyncio.run inside BackgroundTasks (_send_email_sync). This is fine while RESEND_API_KEY is empty (mocked path returns immediately), but if a real key is set later, asyncio.run in a sync task can be fragile when nested in async contexts — consider FastAPI native async background or anyio.from_thread.",
+    "PUBLIC_BASE_URL is read once at import; share URL relies on it being set correctly in .env (it is)."
+  ],
+  "updated_files": ["/app/backend/tests/test_atelier_api.py"],
+  "success_rate": {"backend": "100%", "frontend": "100% (functional); testID names diverge from spec on 3 elements"},
+  "seed_data_creation": "POST /api/_seed seeded the 3 demo clients (idempotent). Tests also created TEST_Pytest Client, TEST_Invoice Client and TEST_UI_Client which are left in DB (prefixed TEST_ for easy cleanup).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env (https://style-manager-29.preview.emergentagent.com). Backend tests live at /app/backend/tests/test_atelier_api.py. Mobile viewport 390x844. Calendar chip testIDs are 'mode-toggle-<mode_key>' and day testIDs are 'day-<YYYY-MM-DD>'.",
+  "rca_of_issue": "N/A — all targeted features pass."
+}
