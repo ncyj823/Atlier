@@ -67,7 +67,7 @@ export default function CalendarScreen() {
 
   // Cell sizing — generous so each day feels like a tile
   const screenW = Dimensions.get("window").width;
-  const cellSize = Math.floor((screenW - spacing.xl * 2) / 7);
+  const cellSize = Math.floor((screenW - spacing.lg * 2) / 7);
 
   return (
     <ScrollView
@@ -224,10 +224,10 @@ const styles = StyleSheet.create({
   modeDot: { width: 6, height: 6, borderRadius: 3 },
   modeChipText: { fontSize: 12, letterSpacing: 0.8 },
 
-  weekRow: { flexDirection: "row", marginTop: spacing.md, paddingHorizontal: spacing.xl, marginBottom: 4 },
+  weekRow: { flexDirection: "row", marginTop: spacing.md, paddingHorizontal: spacing.lg, marginBottom: 4 },
   weekLabel: { flex: 1, textAlign: "center", color: colors.onSurfaceTertiary, fontSize: 11, letterSpacing: 1.2 },
 
-  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: spacing.xl },
+  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: spacing.lg },
   cell: {
     alignItems: "center",
     paddingTop: 8, paddingBottom: 6, gap: 4,
