@@ -28,5 +28,8 @@ Personal business management tool for a fashion/design freelancer. Single-user (
 
 ## Open Items / Follow-ups
 - Real Google OAuth (Calendar + Gmail + Meet) — pending user credentials.
-- Voice input (Siri shortcuts) — needs a production build; user chose to skip.
-- Push notifications for reminders — not requested.
+- Voice auto-stops on silence (VAD) — implemented via `expo-audio` metering polling at 200ms with threshold -42dB held for 1.5s; auto-fires Send.
+- One-tap **Send** (parse + create + reminders in one action). Preview confirmation step removed.
+- Red **overload banner** on Today screen when ≥4 meetings; per-event Reschedule sheet offers +1h / +1d / +1w / Tomorrow 10 AM.
+- Backend `PUT /api/events/{id}` reschedules and re-emails the client.
+- Push notifications for reminders — not requested (in-app local reminders only).

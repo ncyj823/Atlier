@@ -498,6 +498,31 @@ async def delete_event(event_id: str):
     await db.events.delete_one({"id": event_id})
     return {"ok": True}
 
+class EventReschedule(BaseModel):
+    start_iso: str
+
+@api_router.put("/events/{event_id}", response_model=EventOut)
+async def reschedule_event(event_id: str, payload: EventReschedule, background_tasks: BackgroundTasks):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    reminders = _reminders_for(payload.start_iso)
+    await db.events.update_one(
+        {"id": event_id},
+        {"$set": {"start_iso": payload.start_iso, "reminders": reminders}},
+    )
+    ev["start_iso"] = payload.start_iso
+    ev["reminders"] = reminders
+    if ev.get("client_email") and ev.get("mode") != "personal":
+        try:
+            dt = date_parser.isoparse(payload.start_iso)
+            when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
+        except Exception:
+            when_human = payload.start_iso
+        html = _meeting_html(ev["title"], when_human, ev.get("meet_link", ""), ev.get("notes", "") + " (Rescheduled)")
+        background_tasks.add_task(_send_email_sync, ev["client_email"], f"{ev['title']} — Rescheduled", html)
+    return EventOut(**ev)
+
 
 # --- Voice transcription ---
 @api_router.post("/transcribe")

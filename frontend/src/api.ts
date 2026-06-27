@@ -98,4 +98,6 @@ export const api = {
     return req<EventItem[]>(`/api/events${q}`);
   },
   deleteEvent: (id: string) => req<{ ok: boolean }>(`/api/events/${id}`, { method: "DELETE" }),
+  rescheduleEvent: (id: string, startIso: string) =>
+    req<EventItem>(`/api/events/${id}`, { method: "PUT", body: JSON.stringify({ start_iso: startIso }) }),
 };

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator,
-  KeyboardAvoidingView, Platform, RefreshControl,
+  KeyboardAvoidingView, Platform, RefreshControl, Modal,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,6 +11,9 @@ import { api, EventItem } from "@/src/api";
 import { colors, spacing, MODES, modeColor, modeLabel } from "@/src/theme";
 import { useVoiceCapture } from "@/src/use-voice";
 import { scheduleEventReminders } from "@/src/notifications";
+
+// Threshold: 4 or more meetings = heavy / overloaded day
+const OVERLOAD_THRESHOLD = 4;
 
 function todayBounds() {
   const now = new Date();
@@ -28,15 +31,15 @@ function fmtTime(iso: string) {
 export default function TodayScreen() {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState("");
-  const [parsing, setParsing] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [preview, setPreview] = useState<any>(null);
+  const [sending, setSending] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [remindersToast, setRemindersToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const voice = useVoiceCapture();
+  // Reschedule sheet
+  const [rescheduleEvent, setRescheduleEvent] = useState<EventItem | null>(null);
+  const [rescheduling, setRescheduling] = useState(false);
 
   const loadToday = useCallback(async () => {
     try {
@@ -53,64 +56,94 @@ export default function TodayScreen() {
 
   useFocusEffect(useCallback(() => { loadToday(); }, [loadToday]));
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const sendNow = useCallback(async (raw: string) => {
+    const value = raw.trim();
+    if (!value) return;
+    setSending(true);
+    setError(null);
+    try {
+      Haptics.selectionAsync();
+      const parsed = await api.parse(value);
+      const created = await api.createEvent({
+        title: parsed.title,
+        mode: parsed.mode,
+        start_iso: parsed.start_iso,
+        duration_minutes: parsed.duration_minutes,
+        client_id: parsed.client_id,
+        client_email: parsed.client_email,
+        notes: parsed.notes,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const ids = await scheduleEventReminders(created.title, created.start_iso);
+      showToast(
+        ids.length > 0
+          ? `Scheduled · ${ids.length} reminder${ids.length > 1 ? "s" : ""} on this device`
+          : `Scheduled · ${created.title}`
+      );
+      setText("");
+      loadToday();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSending(false);
+    }
+  }, [loadToday]);
+
+  const voice = useVoiceCapture({
+    onAutoStop: (transcript) => {
+      // End-of-sentence detected → fire send immediately
+      if (transcript) {
+        Haptics.selectionAsync();
+        sendNow(transcript);
+      }
+    },
+  });
+
   const onMicPress = async () => {
     Haptics.selectionAsync();
     if (!voice.isRecording) {
       await voice.start();
     } else {
+      // Manual stop fallback: insert text in field (don't auto-send)
       const transcript = await voice.stopAndTranscribe();
-      if (transcript) {
-        setText((prev) => (prev ? prev + " " + transcript : transcript));
+      if (transcript) setText((prev) => (prev ? prev + " " + transcript : transcript));
+    }
+  };
+
+  const onSend = () => sendNow(text);
+
+  const onReschedule = async (offset: "1h" | "1d" | "1w" | "next-morning") => {
+    if (!rescheduleEvent) return;
+    setRescheduling(true);
+    try {
+      const dt = new Date(rescheduleEvent.start_iso);
+      if (offset === "1h") dt.setHours(dt.getHours() + 1);
+      if (offset === "1d") dt.setDate(dt.getDate() + 1);
+      if (offset === "1w") dt.setDate(dt.getDate() + 7);
+      if (offset === "next-morning") {
+        dt.setDate(dt.getDate() + 1);
+        dt.setHours(10, 0, 0, 0);
       }
-    }
-  };
-
-  const onParse = async () => {
-    if (!text.trim()) return;
-    setParsing(true);
-    setPreview(null);
-    try {
-      Haptics.selectionAsync();
-      const data = await api.parse(text.trim());
-      setPreview(data);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setParsing(false);
-    }
-  };
-
-  const onConfirm = async () => {
-    if (!preview) return;
-    setCreating(true);
-    try {
-      const created = await api.createEvent({
-        title: preview.title,
-        mode: preview.mode,
-        start_iso: preview.start_iso,
-        duration_minutes: preview.duration_minutes,
-        client_id: preview.client_id,
-        client_email: preview.client_email,
-        notes: preview.notes,
-      });
+      const updated = await api.rescheduleEvent(rescheduleEvent.id, dt.toISOString());
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Schedule local reminders (in-app)
-      const ids = await scheduleEventReminders(created.title, created.start_iso);
-      setRemindersToast(
-        ids.length > 0 ? `${ids.length} reminder${ids.length > 1 ? "s" : ""} set on this device`
-                       : "Reminders not set (notifications disabled)"
-      );
-      setTimeout(() => setRemindersToast(null), 3500);
-      setText(""); setPreview(null);
+      await scheduleEventReminders(updated.title, updated.start_iso);
+      showToast(`Moved to ${dt.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`);
+      setRescheduleEvent(null);
       loadToday();
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setCreating(false);
+      setRescheduling(false);
     }
   };
 
   const today = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  const overloaded = events.length >= OVERLOAD_THRESHOLD;
 
   return (
     <KeyboardAvoidingView
@@ -127,11 +160,13 @@ export default function TodayScreen() {
 
         <View style={styles.composer} testID="schedule-composer">
           <View style={styles.composerHeader}>
-            <Text style={styles.composerLabel}>{voice.isRecording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Note to schedule"}</Text>
+            <Text style={styles.composerLabel}>
+              {voice.isRecording ? "Listening…  (auto-stops on silence)" : voice.transcribing ? "Transcribing…" : "Note to schedule"}
+            </Text>
             <Pressable
               testID="mic-button"
               onPress={onMicPress}
-              disabled={voice.transcribing}
+              disabled={voice.transcribing || sending}
               style={[styles.micBtn, voice.isRecording && styles.micBtnActive]}
             >
               {voice.transcribing ? (
@@ -153,65 +188,58 @@ export default function TodayScreen() {
             placeholderTextColor={colors.onSurfaceTertiary}
             multiline
             style={styles.composerInput}
+            returnKeyType="send"
+            onSubmitEditing={onSend}
           />
           {voice.error && <Text style={styles.errorText}>{voice.error}</Text>}
           <View style={styles.composerActions}>
             <Pressable
-              testID="parse-button"
-              onPress={onParse}
-              disabled={!text.trim() || parsing}
+              testID="send-button"
+              onPress={onSend}
+              disabled={!text.trim() || sending}
               style={({ pressed }) => [
                 styles.primaryBtn,
-                (!text.trim() || parsing) && { opacity: 0.5 },
+                (!text.trim() || sending) && { opacity: 0.5 },
                 pressed && { opacity: 0.85 },
               ]}
             >
-              {parsing ? (
+              {sending ? (
                 <ActivityIndicator color={colors.onBrandPrimary} />
               ) : (
                 <>
-                  <Feather name="zap" color={colors.onBrandPrimary} size={14} />
-                  <Text style={styles.primaryBtnText}>Parse</Text>
+                  <Feather name="send" color={colors.onBrandPrimary} size={14} />
+                  <Text style={styles.primaryBtnText}>Send</Text>
                 </>
               )}
             </Pressable>
           </View>
         </View>
 
-        {preview && (
-          <View style={styles.preview} testID="schedule-preview">
-            <Text style={styles.previewKicker}>Preview · {modeLabel(preview.mode)}</Text>
-            <Text style={styles.previewTitle}>{preview.title}</Text>
-            <Text style={styles.previewMeta}>
-              {new Date(preview.start_iso).toLocaleString([], {
-                weekday: "long", day: "numeric", month: "short",
-                hour: "numeric", minute: "2-digit",
-              })}
-            </Text>
-            {preview.client_name && (
-              <Text style={styles.previewMeta}>
-                with {preview.client_name}{preview.client_id ? "  ·  linked" : "  ·  no matching client"}
-              </Text>
-            )}
-            <View style={styles.previewActions}>
-              <Pressable testID="confirm-event" onPress={onConfirm} disabled={creating} style={styles.primaryBtn}>
-                {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Confirm & set 3 reminders</Text>}
-              </Pressable>
-              <Pressable testID="cancel-preview" onPress={() => setPreview(null)} style={styles.ghostBtn}>
-                <Text style={styles.ghostBtnText}>Discard</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-
-        {remindersToast && (
+        {toast && (
           <View style={styles.toast} testID="reminders-toast">
-            <Feather name="bell" color={colors.brand} size={14} />
-            <Text style={styles.toastText}>{remindersToast}</Text>
+            <Feather name="check-circle" color={colors.brand} size={14} />
+            <Text style={styles.toastText}>{toast}</Text>
           </View>
         )}
 
-        <Text style={styles.sectionTitle}>Today's agenda</Text>
+        <View style={styles.agendaHeader}>
+          <Text style={styles.sectionTitle}>Today's agenda</Text>
+          {events.length > 0 && (
+            <Text style={[styles.count, overloaded && styles.countRed]} testID="agenda-count">
+              {events.length} meeting{events.length === 1 ? "" : "s"}
+            </Text>
+          )}
+        </View>
+
+        {overloaded && (
+          <View style={styles.overloadBanner} testID="overload-banner">
+            <Feather name="alert-triangle" color={colors.onError} size={18} />
+            <Text style={styles.overloadText}>
+              Heavy day — {events.length} meetings. Tap any event below to reschedule.
+            </Text>
+          </View>
+        )}
+
         {loading ? (
           <ActivityIndicator color={colors.brand} style={{ marginTop: spacing.lg }} />
         ) : events.length === 0 ? (
@@ -221,10 +249,17 @@ export default function TodayScreen() {
           </View>
         ) : (
           events.map((ev) => (
-            <View key={ev.id} style={styles.eventRow} testID={`event-row-${ev.id}`}>
-              <View style={[styles.eventBar, { backgroundColor: modeColor(ev.mode) }]} />
+            <Pressable
+              key={ev.id}
+              testID={`event-row-${ev.id}`}
+              onPress={() => setRescheduleEvent(ev)}
+              style={[styles.eventRow, overloaded && styles.eventRowOverload]}
+            >
+              <View style={[styles.eventBar, { backgroundColor: overloaded ? colors.error : modeColor(ev.mode) }]} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.eventTime}>{fmtTime(ev.start_iso)}  ·  {ev.duration_minutes}m</Text>
+                <Text style={[styles.eventTime, overloaded && { color: colors.error }]}>
+                  {fmtTime(ev.start_iso)}  ·  {ev.duration_minutes}m
+                </Text>
                 <Text style={styles.eventTitle}>{ev.title}</Text>
                 <Text style={styles.eventMeta}>
                   {modeLabel(ev.mode)}{ev.client_name ? `  ·  ${ev.client_name}` : ""}
@@ -233,7 +268,11 @@ export default function TodayScreen() {
                   <Text style={styles.eventLink} numberOfLines={1}>{ev.meet_link}</Text>
                 ) : null}
               </View>
-            </View>
+              <View style={styles.rescheduleHint}>
+                <Feather name="refresh-cw" color={overloaded ? colors.error : colors.onSurfaceTertiary} size={14} />
+                <Text style={[styles.rescheduleHintText, overloaded && { color: colors.error }]}>Reschedule</Text>
+              </View>
+            </Pressable>
           ))
         )}
 
@@ -249,6 +288,43 @@ export default function TodayScreen() {
           ))}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={!!rescheduleEvent}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRescheduleEvent(null)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setRescheduleEvent(null)} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} testID="reschedule-sheet">
+          <Text style={styles.kicker}>Reschedule</Text>
+          <Text style={styles.sheetTitle}>{rescheduleEvent?.title}</Text>
+          <Text style={styles.sheetMeta}>
+            Currently {rescheduleEvent ? new Date(rescheduleEvent.start_iso).toLocaleString([], {
+              weekday: "long", day: "numeric", month: "short",
+              hour: "numeric", minute: "2-digit",
+            }) : ""}
+          </Text>
+          <View style={styles.optionsRow}>
+            <Pressable testID="reschedule-1h" onPress={() => onReschedule("1h")} disabled={rescheduling} style={styles.optionBtn}>
+              <Text style={styles.optionBtnLabel}>+1 hour</Text>
+            </Pressable>
+            <Pressable testID="reschedule-1d" onPress={() => onReschedule("1d")} disabled={rescheduling} style={styles.optionBtn}>
+              <Text style={styles.optionBtnLabel}>+1 day</Text>
+            </Pressable>
+            <Pressable testID="reschedule-1w" onPress={() => onReschedule("1w")} disabled={rescheduling} style={styles.optionBtn}>
+              <Text style={styles.optionBtnLabel}>+1 week</Text>
+            </Pressable>
+            <Pressable testID="reschedule-next-morning" onPress={() => onReschedule("next-morning")} disabled={rescheduling} style={[styles.optionBtn, styles.optionBtnPrimary]}>
+              <Text style={[styles.optionBtnLabel, { color: "#fff" }]}>Tomorrow 10 AM</Text>
+            </Pressable>
+          </View>
+          {rescheduling && <ActivityIndicator color={colors.brand} style={{ marginTop: spacing.md }} />}
+          <Pressable testID="reschedule-cancel" onPress={() => setRescheduleEvent(null)} style={styles.ghostBtn}>
+            <Text style={styles.ghostBtnText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -263,7 +339,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.md,
   },
   composerHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  composerLabel: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary },
+  composerLabel: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary, flex: 1, marginRight: spacing.sm },
   composerInput: {
     fontFamily: "Georgia", fontSize: 18, lineHeight: 26, color: colors.onSurface,
     minHeight: 80, textAlignVertical: "top",
@@ -280,14 +356,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 6,
   },
   primaryBtnText: { color: colors.onBrandPrimary, letterSpacing: 1.5, textTransform: "uppercase", fontSize: 12 },
-  ghostBtn: { paddingHorizontal: spacing.lg, paddingVertical: 12 },
+  ghostBtn: { paddingHorizontal: spacing.lg, paddingVertical: 12, alignSelf: "flex-start" },
   ghostBtnText: { color: colors.onSurfaceSecondary, letterSpacing: 1.5, textTransform: "uppercase", fontSize: 12 },
-
-  preview: { backgroundColor: colors.surfaceSecondary, padding: spacing.lg, gap: 6 },
-  previewKicker: { letterSpacing: 2, textTransform: "uppercase", fontSize: 10, color: colors.brand, marginBottom: 4 },
-  previewTitle: { fontFamily: "Georgia", fontSize: 22, color: colors.onSurface },
-  previewMeta: { color: colors.onSurfaceSecondary, fontSize: 14 },
-  previewActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
 
   toast: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
@@ -296,23 +366,32 @@ const styles = StyleSheet.create({
   },
   toastText: { color: colors.onBrandTertiary, fontSize: 13 },
 
-  sectionTitle: {
-    fontFamily: "Georgia", fontSize: 20, color: colors.onSurface,
-    marginTop: spacing.lg, marginBottom: spacing.sm,
+  agendaHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginTop: spacing.lg },
+  sectionTitle: { fontFamily: "Georgia", fontSize: 20, color: colors.onSurface },
+  count: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary },
+  countRed: { color: colors.error },
+
+  overloadBanner: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    backgroundColor: colors.error, paddingHorizontal: spacing.md, paddingVertical: spacing.md,
   },
+  overloadText: { color: colors.onError, fontSize: 13, flex: 1, lineHeight: 18 },
 
   empty: { alignItems: "center", paddingVertical: spacing.xxl, gap: spacing.sm },
   emptyText: { color: colors.onSurfaceTertiary, fontStyle: "italic" },
 
   eventRow: {
-    flexDirection: "row", gap: spacing.md, paddingVertical: spacing.md,
+    flexDirection: "row", gap: spacing.md, paddingVertical: spacing.md, alignItems: "center",
     borderBottomWidth: 1, borderBottomColor: colors.border,
   },
+  eventRowOverload: { borderBottomColor: colors.error },
   eventBar: { width: 3, alignSelf: "stretch" },
   eventTime: { color: colors.onSurfaceTertiary, fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
   eventTitle: { fontFamily: "Georgia", fontSize: 18, color: colors.onSurface, marginTop: 2 },
   eventMeta: { color: colors.onSurfaceSecondary, fontSize: 13, marginTop: 2 },
   eventLink: { color: colors.brand, fontSize: 12, marginTop: 4 },
+  rescheduleHint: { alignItems: "center", gap: 2, paddingHorizontal: spacing.sm },
+  rescheduleHintText: { fontSize: 9, letterSpacing: 1.2, textTransform: "uppercase", color: colors.onSurfaceTertiary },
 
   errorText: { color: colors.error, marginTop: spacing.sm, fontSize: 13 },
 
@@ -321,4 +400,20 @@ const styles = StyleSheet.create({
   modeChipLegend: { flexDirection: "row", alignItems: "center", gap: 6 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   modeChipText: { fontSize: 12, color: colors.onSurfaceSecondary },
+
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(26,25,24,0.4)" },
+  sheet: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    backgroundColor: colors.surface, padding: spacing.xl, gap: spacing.sm,
+    borderTopWidth: 1, borderColor: colors.borderStrong,
+  },
+  sheetTitle: { fontFamily: "Georgia", fontSize: 22, color: colors.onSurface, marginTop: 4 },
+  sheetMeta: { color: colors.onSurfaceSecondary, fontSize: 13, marginBottom: spacing.md },
+  optionsRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  optionBtn: {
+    paddingHorizontal: spacing.lg, paddingVertical: 12,
+    borderWidth: 1, borderColor: colors.borderStrong,
+  },
+  optionBtnPrimary: { backgroundColor: colors.brand, borderColor: colors.brand },
+  optionBtnLabel: { color: colors.onSurface, fontSize: 13, letterSpacing: 0.8, textTransform: "uppercase" },
 });
