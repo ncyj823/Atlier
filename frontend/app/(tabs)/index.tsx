@@ -9,6 +9,8 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { api, EventItem } from "@/src/api";
 import { colors, spacing, MODES, modeColor, modeLabel } from "@/src/theme";
+import { useVoiceCapture } from "@/src/use-voice";
+import { scheduleEventReminders } from "@/src/notifications";
 
 function todayBounds() {
   const now = new Date();
@@ -32,6 +34,9 @@ export default function TodayScreen() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [remindersToast, setRemindersToast] = useState<string | null>(null);
+
+  const voice = useVoiceCapture();
 
   const loadToday = useCallback(async () => {
     try {
@@ -47,6 +52,18 @@ export default function TodayScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => { loadToday(); }, [loadToday]));
+
+  const onMicPress = async () => {
+    Haptics.selectionAsync();
+    if (!voice.isRecording) {
+      await voice.start();
+    } else {
+      const transcript = await voice.stopAndTranscribe();
+      if (transcript) {
+        setText((prev) => (prev ? prev + " " + transcript : transcript));
+      }
+    }
+  };
 
   const onParse = async () => {
     if (!text.trim()) return;
@@ -67,7 +84,7 @@ export default function TodayScreen() {
     if (!preview) return;
     setCreating(true);
     try {
-      await api.createEvent({
+      const created = await api.createEvent({
         title: preview.title,
         mode: preview.mode,
         start_iso: preview.start_iso,
@@ -77,6 +94,13 @@ export default function TodayScreen() {
         notes: preview.notes,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Schedule local reminders (in-app)
+      const ids = await scheduleEventReminders(created.title, created.start_iso);
+      setRemindersToast(
+        ids.length > 0 ? `${ids.length} reminder${ids.length > 1 ? "s" : ""} set on this device`
+                       : "Reminders not set (notifications disabled)"
+      );
+      setTimeout(() => setRemindersToast(null), 3500);
       setText(""); setPreview(null);
       loadToday();
     } catch (e: any) {
@@ -102,16 +126,35 @@ export default function TodayScreen() {
         <Text style={styles.h1} testID="today-date">{today}</Text>
 
         <View style={styles.composer} testID="schedule-composer">
-          <Text style={styles.composerLabel}>Note to schedule</Text>
+          <View style={styles.composerHeader}>
+            <Text style={styles.composerLabel}>{voice.isRecording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Note to schedule"}</Text>
+            <Pressable
+              testID="mic-button"
+              onPress={onMicPress}
+              disabled={voice.transcribing}
+              style={[styles.micBtn, voice.isRecording && styles.micBtnActive]}
+            >
+              {voice.transcribing ? (
+                <ActivityIndicator color={colors.brand} />
+              ) : (
+                <Feather
+                  name={voice.isRecording ? "square" : "mic"}
+                  color={voice.isRecording ? "#fff" : colors.brand}
+                  size={16}
+                />
+              )}
+            </Pressable>
+          </View>
           <TextInput
             testID="schedule-input"
             value={text}
             onChangeText={setText}
-            placeholder={'"Schedule a design call for Anaïs at 6pm IST on coming Wednesday"'}
+            placeholder={'Tap the mic, or type "Schedule a design call for Anaïs at 6pm IST on coming Wednesday"'}
             placeholderTextColor={colors.onSurfaceTertiary}
             multiline
             style={styles.composerInput}
           />
+          {voice.error && <Text style={styles.errorText}>{voice.error}</Text>}
           <View style={styles.composerActions}>
             <Pressable
               testID="parse-button"
@@ -152,12 +195,19 @@ export default function TodayScreen() {
             )}
             <View style={styles.previewActions}>
               <Pressable testID="confirm-event" onPress={onConfirm} disabled={creating} style={styles.primaryBtn}>
-                {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Confirm & schedule</Text>}
+                {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Confirm & set 3 reminders</Text>}
               </Pressable>
               <Pressable testID="cancel-preview" onPress={() => setPreview(null)} style={styles.ghostBtn}>
                 <Text style={styles.ghostBtnText}>Discard</Text>
               </Pressable>
             </View>
+          </View>
+        )}
+
+        {remindersToast && (
+          <View style={styles.toast} testID="reminders-toast">
+            <Feather name="bell" color={colors.brand} size={14} />
+            <Text style={styles.toastText}>{remindersToast}</Text>
           </View>
         )}
 
@@ -212,12 +262,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.md,
   },
+  composerHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   composerLabel: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary },
   composerInput: {
     fontFamily: "Georgia", fontSize: 18, lineHeight: 26, color: colors.onSurface,
     minHeight: 80, textAlignVertical: "top",
   },
   composerActions: { flexDirection: "row", justifyContent: "flex-end" },
+  micBtn: {
+    width: 40, height: 40, alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 20,
+  },
+  micBtnActive: { backgroundColor: colors.brand, borderColor: colors.brand },
 
   primaryBtn: {
     backgroundColor: colors.brand, paddingHorizontal: spacing.lg, paddingVertical: 12,
@@ -232,6 +288,13 @@ const styles = StyleSheet.create({
   previewTitle: { fontFamily: "Georgia", fontSize: 22, color: colors.onSurface },
   previewMeta: { color: colors.onSurfaceSecondary, fontSize: 14 },
   previewActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
+
+  toast: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandSecondary,
+  },
+  toastText: { color: colors.onBrandTertiary, fontSize: 13 },
 
   sectionTitle: {
     fontFamily: "Georgia", fontSize: 20, color: colors.onSurface,
@@ -251,7 +314,7 @@ const styles = StyleSheet.create({
   eventMeta: { color: colors.onSurfaceSecondary, fontSize: 13, marginTop: 2 },
   eventLink: { color: colors.brand, fontSize: 12, marginTop: 4 },
 
-  errorText: { color: colors.error, marginTop: spacing.md },
+  errorText: { color: colors.error, marginTop: spacing.sm, fontSize: 13 },
 
   helperHeader: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary, marginTop: spacing.xl },
   modesLegend: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginTop: spacing.sm },

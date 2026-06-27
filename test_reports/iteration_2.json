@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 2 (voice + bigger calendar + reminders) tested end-to-end. Backend: 10/10 pytest tests pass against the public preview URL — including the new POST /api/transcribe (Whisper-1 via Emergent LLM key) which returns 200 + {text: '...'} for a 1-second silent WAV, and rejects empty audio with 400. All previously verified endpoints (root, idempotent _seed, GET /clients, schedule/parse → design_call IST +05:30 future, events create with mock meet_link + 3 reminders, events range, invoice item CRUD with persistence checks, share token + public HTML) continue to pass. Frontend (mobile 390x844): Today screen renders the mic-button in the composer header alongside schedule-input and parse-button; typing 'Schedule a design call for Anaïs at 6pm IST on coming Wednesday' produced a valid schedule-preview, confirm-event tapped without crashing, and the post-confirm flow completed (event created on backend, agenda refreshed). Reminders-toast testID is present in DOM logic but did not show in the 4s window after confirm — expected on web because expo-notifications no-op returns 0 ids and toast auto-dismisses at 3.5s; per spec note this is acceptable. Calendar screen shows month label 'June 2026', all 4 mode-toggle-* chips render & toggle, day cells measure 48x64 (height >=50, width 48 — 2px shy of the 50px target on a 390-wide viewport), events render as horizontal bars (eventLine width:22 height:3) under the day number — bars not dots — and today-btn works. The whole page is wrapped in a single outer ScrollView with stickyHeaderIndices=[0] so the sticky header is preserved while content can scroll (content fit in viewport in test so no scroll delta was needed).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Calendar day cell width", "issue": "Day cell width computes to 48px on a 390-wide viewport (Math.floor((390 - 2*24)/7) = 48). Spec asks for >=50px. Height is 64px (OK). Consider reducing horizontal padding (spacing.xl=24 → 16) so cells reach 53px wide, or use Math.ceil. Reference: /app/frontend/app/(tabs)/calendar.tsx:70", "testID": "day-2026-06-27", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Calendar", "issues": ["Each day cell width 48px is 2px under the 50px touch-friendly target; consider tightening grid horizontal padding."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_atelier_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: bump day cell width to >=50 by reducing the grid's horizontal padding from spacing.xl (24) to spacing.lg (16) in /app/frontend/app/(tabs)/calendar.tsx (styles.grid + cellSize calc).",
+    "Optional: convert the two `return id` lines in test_atelier_api.py to assignments to silence PytestReturnNotNoneWarning."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py:325 `_send_email_sync` uses asyncio.run inside a BackgroundTask — fine while RESEND_API_KEY is empty (mocked path returns immediately), but if a real key is added, prefer FastAPI native async or anyio.from_thread.",
+    "/app/frontend/src/notifications.ts always falls through to ensureSetup which calls setNotificationHandler even on web — harmless but unnecessary. Permission flow correctly short-circuits on web (returns false), so reminders-toast will always read 'Reminders not set (notifications disabled)' on web preview. This matches the playbook expectation."
+  ],
+  "updated_files": ["/app/backend/tests/test_atelier_api.py (added test_transcribe_silent_wav and test_transcribe_empty_audio_rejected)"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% functional (1 minor sizing nit on day cell width)"},
+  "seed_data_creation": "POST /api/_seed (idempotent) — 3 demo clients. Pytest also created TEST_Pytest Client and TEST_Invoice Client (prefixed TEST_ for easy cleanup). One TEST_Event design_call event was created with a +2 day start_iso.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public preview: https://style-manager-29.preview.emergentagent.com. Backend tests live at /app/backend/tests/test_atelier_api.py (pytest, 10 tests). Transcribe accepts multipart 'audio' field; silent 1s WAV returns 200 with {text:''} or {text:'you'} depending on Whisper response. On web, expo-notifications is no-op so scheduleEventReminders returns []; the toast appears for ~3.5s with text 'Reminders not set (notifications disabled)' — tests should poll within 3s after confirm-event if visual validation is needed. Calendar testIDs: calendar-month, today-btn, prev-month, next-month, mode-toggle-{design_call|measurement_call|sending_pieces|personal}, day-{YYYY-MM-DD}.",
+  "rca_of_issue": "N/A — all targeted features for iteration 2 verified passing. Only nit: calendar day cell width is 48px vs >=50 target due to spacing.xl (24) horizontal padding on a 390-wide viewport."
+}

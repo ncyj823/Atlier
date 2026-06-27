@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks
+import tempfile
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from dateutil import parser as date_parser
 import resend
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -495,6 +497,55 @@ async def list_events(from_iso: Optional[str] = None, to_iso: Optional[str] = No
 async def delete_event(event_id: str):
     await db.events.delete_one({"id": event_id})
     return {"ok": True}
+
+
+# --- Voice transcription ---
+@api_router.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "LLM key not configured")
+    suffix_map = {
+        "audio/m4a": ".m4a", "audio/x-m4a": ".m4a", "audio/mp4": ".m4a",
+        "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
+        "audio/wav": ".wav", "audio/x-wav": ".wav",
+        "audio/webm": ".webm", "audio/ogg": ".webm",
+    }
+    # Prefer original filename extension if reasonable
+    name = audio.filename or ""
+    ext = ""
+    if "." in name:
+        ext = "." + name.rsplit(".", 1)[-1].lower()
+    if ext not in {".m4a", ".mp3", ".wav", ".webm", ".mp4", ".mpeg", ".mpga"}:
+        ext = suffix_map.get(audio.content_type or "", ".m4a")
+
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "Empty audio")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+
+    try:
+        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+        with open(tmp_path, "rb") as fh:
+            res = await stt.transcribe(file=fh, model="whisper-1", response_format="json")
+        text = ""
+        if hasattr(res, "text"):
+            text = res.text
+        elif isinstance(res, dict):
+            text = res.get("text", "")
+        else:
+            text = str(res)
+        return {"text": text.strip()}
+    except Exception as e:
+        logger.error(f"transcribe failed: {e}")
+        raise HTTPException(500, f"Transcription failed: {e}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 # --- Seed ---

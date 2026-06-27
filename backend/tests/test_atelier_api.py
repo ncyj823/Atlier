@@ -150,3 +150,27 @@ def test_invoice_item_crud_and_share(s):
     assert pub.status_code == 200
     assert "TEST_Invoice Client" in pub.text
     assert "text/html" in pub.headers.get("content-type", "")
+
+
+
+# --- Voice transcription (Whisper-1 via Emergent LLM key) ---
+def test_transcribe_silent_wav():
+    import wave, io
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 16000)  # 1s silence
+    audio_bytes = buf.getvalue()
+    files = {"audio": ("silent.wav", audio_bytes, "audio/wav")}
+    r = requests.post(f"{API}/transcribe", files=files, timeout=60)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert "text" in j
+    assert isinstance(j["text"], str)
+
+
+def test_transcribe_empty_audio_rejected():
+    files = {"audio": ("empty.wav", b"", "audio/wav")}
+    r = requests.post(f"{API}/transcribe", files=files, timeout=20)
+    # Empty data raises 400 per server logic
+    assert r.status_code in (400, 422, 500)

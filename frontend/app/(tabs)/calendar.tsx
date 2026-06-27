@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Dimensions } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { api, EventItem } from "@/src/api";
-import { colors, spacing, MODES, modeColor } from "@/src/theme";
+import { colors, spacing, MODES, modeColor, modeLabel } from "@/src/theme";
 
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -65,51 +65,72 @@ export default function CalendarScreen() {
   const monthLabel = cursor.toLocaleDateString([], { month: "long", year: "numeric" });
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.lg }]}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.kicker}>Atelier · Calendar</Text>
-          <Text style={styles.h1} testID="calendar-month">{monthLabel}</Text>
-        </View>
-        <View style={styles.navRow}>
-          <Pressable
-            testID="prev-month"
-            onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-            style={styles.navBtn}
-          >
-            <Feather name="chevron-left" color={colors.onSurface} size={20} />
-          </Pressable>
-          <Pressable
-            testID="next-month"
-            onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-            style={styles.navBtn}
-          >
-            <Feather name="chevron-right" color={colors.onSurface} size={20} />
-          </Pressable>
-        </View>
-      </View>
+  // Cell sizing — generous so each day feels like a tile
+  const screenW = Dimensions.get("window").width;
+  const cellSize = Math.floor((screenW - spacing.xl * 2) / 7);
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.modeRow}
-      >
-        {MODES.map((m) => {
-          const on = activeModes[m.key];
-          return (
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.surface }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+      stickyHeaderIndices={[0]}
+    >
+      <View style={[styles.stickyHeader, { paddingTop: insets.top + spacing.lg }]}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.kicker}>Atelier · Calendar</Text>
+            <Text style={styles.h1} testID="calendar-month">{monthLabel}</Text>
+          </View>
+          <View style={styles.navRow}>
             <Pressable
-              key={m.key}
-              testID={`mode-toggle-${m.key}`}
-              onPress={() => setActiveModes((s) => ({ ...s, [m.key]: !s[m.key] }))}
-              style={[styles.modeChip, { borderColor: on ? m.color : colors.border }, on && { backgroundColor: m.color }]}
+              testID="prev-month"
+              onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
+              style={styles.navBtn}
             >
-              <View style={[styles.modeDot, { backgroundColor: on ? "#fff" : m.color }]} />
-              <Text style={[styles.modeChipText, { color: on ? "#fff" : colors.onSurface }]}>{m.label}</Text>
+              <Feather name="chevron-left" color={colors.onSurface} size={22} />
             </Pressable>
-          );
-        })}
-      </ScrollView>
+            <Pressable
+              testID="today-btn"
+              onPress={() => {
+                const n = new Date();
+                setCursor(new Date(n.getFullYear(), n.getMonth(), 1));
+                setSelected(n.toISOString().slice(0, 10));
+              }}
+              style={styles.navBtn}
+            >
+              <Text style={styles.navBtnText}>Today</Text>
+            </Pressable>
+            <Pressable
+              testID="next-month"
+              onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
+              style={styles.navBtn}
+            >
+              <Feather name="chevron-right" color={colors.onSurface} size={22} />
+            </Pressable>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.modeRow}
+        >
+          {MODES.map((m) => {
+            const on = activeModes[m.key];
+            return (
+              <Pressable
+                key={m.key}
+                testID={`mode-toggle-${m.key}`}
+                onPress={() => setActiveModes((s) => ({ ...s, [m.key]: !s[m.key] }))}
+                style={[styles.modeChip, { borderColor: on ? m.color : colors.border }, on && { backgroundColor: m.color }]}
+              >
+                <View style={[styles.modeDot, { backgroundColor: on ? "#fff" : m.color }]} />
+                <Text style={[styles.modeChipText, { color: on ? "#fff" : colors.onSurface }]}>{m.label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       <View style={styles.weekRow}>
         {DAY_LABELS.map((d, i) => <Text key={i} style={styles.weekLabel}>{d}</Text>)}
@@ -117,7 +138,7 @@ export default function CalendarScreen() {
 
       <View style={styles.grid}>
         {cells.map((c, i) => {
-          if (!c) return <View key={i} style={styles.cell} />;
+          if (!c) return <View key={i} style={[styles.cell, { width: cellSize, height: cellSize + 16 }]} />;
           const evs = eventsByDay[c.iso] || [];
           const isToday = c.iso === todayIso;
           const isSel = c.iso === selected;
@@ -126,13 +147,28 @@ export default function CalendarScreen() {
               key={i}
               testID={`day-${c.iso}`}
               onPress={() => setSelected(c.iso)}
-              style={[styles.cell, isSel && styles.cellSelected]}
+              style={[
+                styles.cell,
+                { width: cellSize, height: cellSize + 16 },
+                isSel && styles.cellSelected,
+                isToday && !isSel && styles.cellToday,
+              ]}
             >
-              <Text style={[styles.cellNum, isToday && { color: colors.brand }, isSel && { color: "#fff" }]}>{c.d}</Text>
-              <View style={styles.dotsRow}>
+              <Text style={[
+                styles.cellNum,
+                isToday && { color: colors.brand },
+                isSel && { color: "#fff" },
+              ]}>{c.d}</Text>
+              <View style={styles.barsCol}>
                 {evs.slice(0, 4).map((ev) => (
-                  <View key={ev.id} style={[styles.evDot, { backgroundColor: modeColor(ev.mode) }]} />
+                  <View
+                    key={ev.id}
+                    style={[styles.eventLine, { backgroundColor: isSel ? "#fff" : modeColor(ev.mode) }]}
+                  />
                 ))}
+                {evs.length > 4 ? (
+                  <Text style={[styles.moreText, isSel && { color: "#fff" }]}>+{evs.length - 4}</Text>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -146,7 +182,7 @@ export default function CalendarScreen() {
         {loading && <ActivityIndicator color={colors.brand} />}
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: spacing.xxxl }}>
+      <View style={{ paddingHorizontal: spacing.xl }}>
         {dayEvents.length === 0 ? (
           <Text style={styles.empty} testID="day-empty">No events on this day.</Text>
         ) : (
@@ -156,6 +192,7 @@ export default function CalendarScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.eventTime}>
                   {new Date(ev.start_iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  {"  ·  "}{modeLabel(ev.mode)}
                 </Text>
                 <Text style={styles.eventTitle}>{ev.title}</Text>
                 {ev.client_name ? <Text style={styles.eventMeta}>with {ev.client_name}</Text> : null}
@@ -163,21 +200,22 @@ export default function CalendarScreen() {
             </View>
           ))
         )}
-      </ScrollView>
-    </View>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface, paddingHorizontal: spacing.xl },
+  stickyHeader: { backgroundColor: colors.surface, paddingHorizontal: spacing.xl, paddingBottom: spacing.sm, borderBottomWidth: 1, borderColor: colors.border },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
   navRow: { flexDirection: "row", gap: spacing.xs },
-  navBtn: { padding: 8, borderWidth: 1, borderColor: colors.border },
+  navBtn: { paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  navBtnText: { fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: colors.onSurface },
 
   kicker: { letterSpacing: 2.4, textTransform: "uppercase", color: colors.brand, fontSize: 11 },
-  h1: { fontFamily: "Georgia", fontSize: 26, color: colors.onSurface, marginTop: 4 },
+  h1: { fontFamily: "Georgia", fontSize: 28, color: colors.onSurface, marginTop: 4 },
 
-  modeRow: { gap: spacing.sm, paddingVertical: spacing.md, paddingRight: spacing.lg },
+  modeRow: { gap: spacing.sm, paddingTop: spacing.md, paddingRight: spacing.lg },
   modeChip: {
     flexShrink: 0, height: 36, paddingHorizontal: 14,
     flexDirection: "row", alignItems: "center", gap: 6,
@@ -186,27 +224,29 @@ const styles = StyleSheet.create({
   modeDot: { width: 6, height: 6, borderRadius: 3 },
   modeChipText: { fontSize: 12, letterSpacing: 0.8 },
 
-  weekRow: { flexDirection: "row", marginTop: spacing.sm, marginBottom: 4 },
-  weekLabel: { flex: 1, textAlign: "center", color: colors.onSurfaceTertiary, fontSize: 11, letterSpacing: 1 },
+  weekRow: { flexDirection: "row", marginTop: spacing.md, paddingHorizontal: spacing.xl, marginBottom: 4 },
+  weekLabel: { flex: 1, textAlign: "center", color: colors.onSurfaceTertiary, fontSize: 11, letterSpacing: 1.2 },
 
-  grid: { flexDirection: "row", flexWrap: "wrap" },
+  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: spacing.xl },
   cell: {
-    width: `${100 / 7}%`, aspectRatio: 1,
-    alignItems: "center", justifyContent: "center", gap: 4,
+    alignItems: "center",
+    paddingTop: 8, paddingBottom: 6, gap: 4,
     borderBottomWidth: 1, borderRightWidth: 1, borderColor: colors.border,
   },
-  cellSelected: { backgroundColor: colors.surfaceInverse },
-  cellNum: { fontFamily: "Georgia", fontSize: 16, color: colors.onSurface },
-  dotsRow: { flexDirection: "row", gap: 3, minHeight: 6 },
-  evDot: { width: 4, height: 4, borderRadius: 2 },
+  cellSelected: { backgroundColor: colors.surfaceInverse, borderColor: colors.surfaceInverse },
+  cellToday: { backgroundColor: colors.brandTertiary },
+  cellNum: { fontFamily: "Georgia", fontSize: 18, color: colors.onSurface },
+  barsCol: { alignItems: "center", gap: 3, marginTop: 2 },
+  eventLine: { width: 22, height: 3 },
+  moreText: { fontSize: 9, color: colors.onSurfaceTertiary, marginTop: 1 },
 
-  detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.lg },
-  sectionTitle: { fontFamily: "Georgia", fontSize: 18, color: colors.onSurface },
+  detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.xl, paddingHorizontal: spacing.xl },
+  sectionTitle: { fontFamily: "Georgia", fontSize: 20, color: colors.onSurface },
   empty: { color: colors.onSurfaceTertiary, fontStyle: "italic", marginTop: spacing.md },
 
   eventRow: { flexDirection: "row", gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   eventBar: { width: 3, alignSelf: "stretch" },
   eventTime: { color: colors.onSurfaceTertiary, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" },
-  eventTitle: { fontFamily: "Georgia", fontSize: 16, color: colors.onSurface, marginTop: 2 },
+  eventTitle: { fontFamily: "Georgia", fontSize: 17, color: colors.onSurface, marginTop: 2 },
   eventMeta: { color: colors.onSurfaceSecondary, fontSize: 13, marginTop: 2 },
 });
