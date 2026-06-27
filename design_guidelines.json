@@ -1,0 +1,144 @@
+{
+  "app_name": "Atelier",
+  "personality": "3 Editorial Mobile LIGHT",
+  "personality_one_liner": "A calm, premium, and trustworthy editorial space that lets fashion content breathe.",
+  "color": {
+    "surface": "#FDFBF7",
+    "onSurface": "#1A1918",
+    "surfaceSecondary": "#F5F2EB",
+    "onSurfaceSecondary": "#4A4845",
+    "surfaceTertiary": "#EAE5DA",
+    "onSurfaceTertiary": "#6B6761",
+    "surfaceInverse": "#1A1918",
+    "onSurfaceInverse": "#FDFBF7",
+    "brand": "#A3523B",
+    "brandPrimary": "#A3523B",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#C97A63",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#F2E2DC",
+    "onBrandTertiary": "#6B2A17",
+    "success": "#5C6B5D",
+    "onSuccess": "#FFFFFF",
+    "warning": "#B38A58",
+    "onWarning": "#FFFFFF",
+    "error": "#A3523B",
+    "onError": "#FFFFFF",
+    "info": "#8C8984",
+    "onInfo": "#FFFFFF",
+    "border": "#EAE5DA",
+    "borderStrong": "#CFC8BB",
+    "divider": "#EAE5DA"
+  },
+  "typography": {
+    "displayFontFamily": "Playfair Display",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Editorial spacing: generous vertical rhythm, let typography breathe. Avoid dense grouping.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 0,
+    "md": 4,
+    "lg": 8,
+    "pill": 999
+  },
+  "shadow_tier": 0,
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [],
+    "dont's": ["Do not use blur or glassmorphism. This app relies on flat, solid surfaces with borders and generous whitespace."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home / Schedule",
+      "purpose": "A quick overview of today's timeline and an entry point for NLP scheduling.",
+      "states": {
+        "loading": "Centered minimalist spinner.",
+        "empty": "Subtle abstract texture with 'No appointments today' text and a button to schedule.",
+        "error": "Text stating 'Could not load schedule' with a 'Try Again' button."
+      },
+      "layout": "Header with 'Today's Agenda' in serif. A prominent text input box at the top or bottom for the Smart NLP Scheduling ('Schedule a design call...'). Below that, a clean timeline view of today's events, using the color-coded categories as left-borders or small indicator dots."
+    },
+    {
+      "name": "Calendar",
+      "purpose": "A full month or week view with toggleable category filters.",
+      "states": {
+        "loading": "Centered minimalist spinner.",
+        "empty": "N/A - Calendar always shows dates.",
+        "error": "Error loading calendar data."
+      },
+      "layout": "Top row of pills/toggles for the 4 modes: Design Call (Clay/Terracotta), Measurement Call (Ochre), Sending Pieces (Sage), Personal (Grey). The calendar grid below is spacious, with serif numbers. Events are indicated by minimal colored dots or thin lines matching the toggles."
+    },
+    {
+      "name": "Clients List",
+      "purpose": "A directory of the freelancer's clients.",
+      "states": {
+        "loading": "Skeleton rows.",
+        "empty": "Illustration/Texture with 'No clients yet. Add your first client.'",
+        "error": "Error message with retry."
+      },
+      "layout": "Editorial list layout. Large, high-quality circular or square avatars (real fashion photos), with the client's name in serif and last interaction date in sans-serif. 'Create Client' FAB or sticky bottom button."
+    },
+    {
+      "name": "Client Detail",
+      "purpose": "A comprehensive profile for a single client including contact, measurements, PDFs, and invoices.",
+      "states": {
+        "loading": "Centered spinner.",
+        "empty": "N/A - Profile will show empty states within its sections (e.g., 'No invoices').",
+        "error": "Error loading client profile."
+      },
+      "layout": "Hero section with a cover image (fashion editorial photo) and gradient scrim. Client name and basic info overlaid. Below: A segmented control or simple scrolling page with sections: 1. Measurements (clean key-value pairs). 2. Moodboards/PDFs (horizontal scrolling cards or grid). 3. Invoices (minimal table with clear 'Cleared/Pending' status text, no heavy borders). Include a 'Share Profile' action in the header."
+    }
+  ],
+  "images": {
+    "client_avatar_placeholder": {
+      "url": "https://images.pexels.com/photos/1066171/pexels-photo-1066171.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Fashion editorial portrait of a model"
+    },
+    "client_cover_image": {
+      "url": "https://images.pexels.com/photos/32455016/pexels-photo-32455016.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Two stylish adults in bold outfits"
+    },
+    "empty_state_texture": {
+      "url": "https://images.pexels.com/photos/6070384/pexels-photo-6070384.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Minimal abstract paper texture"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Adhere strictly to the Editorial Mobile LIGHT personality. No glassmorphism, no heavy shadows. Use flat surfaces, hairlines (1pt borders), and generous whitespace.",
+    "For the 4 calendar modes, map them to our earthy palette to avoid banned colors (like bright purple). Use: Design Call -> Deep Clay/Terracotta (#A3523B), Measurement Call -> Ochre/Gold (#B38A58), Sending Pieces -> Sage (#5C6B5D), Personal -> Warm Grey (#8C8984).",
+    "Use Playfair Display for primary headers and client names. Use Satoshi for all body text, UI labels, and data (measurements, invoices).",
+    "For the Smart Scheduling NLP input, design a prominent, clean text area that feels like a premium journal entry rather than a standard chat input.",
+    "Implement the gradient scrim pattern (transparent to surfaceInverse) strictly when placing text over the client cover images.",
+    "Ensure the invoice table is extremely minimal. Avoid typical enterprise data grid styles. Use generous row padding and subtle bottom borders."
+  ]
+}
