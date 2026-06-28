@@ -47,6 +47,24 @@ export type InvoiceItem = {
 
 export type PdfMeta = { id: string; name: string; uploaded_at: string; size_bytes: number };
 
+export type Project = {
+  id: string;
+  client_id: string;
+  client_name?: string;
+  title: string;
+  delivery_location: string;
+  deadline: string | null;
+  description: string;
+  total_amount: number;
+  paid_amount: number;
+  status: "ongoing" | "completed";
+  created_at: string;
+  updated_at: string;
+};
+
+export type CanvasStroke = { d: string; color: string; width: number };
+export type Canvas = { project_id: string; gender: "female" | "male"; strokes: CanvasStroke[]; updated_at: string };
+
 export const api = {
   seed: () => req<{ ok: boolean }>("/api/_seed", { method: "POST" }),
   listClients: () => req<Client[]>("/api/clients"),
@@ -100,4 +118,28 @@ export const api = {
   deleteEvent: (id: string) => req<{ ok: boolean }>(`/api/events/${id}`, { method: "DELETE" }),
   rescheduleEvent: (id: string, startIso: string) =>
     req<EventItem>(`/api/events/${id}`, { method: "PUT", body: JSON.stringify({ start_iso: startIso }) }),
+
+  // Projects
+  listProjects: () => req<Project[]>("/api/projects"),
+  getProject: (id: string) =>
+    req<{ project: Project; client: Client; pdfs: PdfMeta[]; canvas: Canvas }>(`/api/projects/${id}`),
+  createProject: (body: Partial<Project> & { client_id: string; title: string; mannequin_gender?: "female" | "male" }) =>
+    req<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
+  updateProject: (id: string, body: Partial<Project>) =>
+    req<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteProject: (id: string) =>
+    req<{ ok: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  uploadProjectPdf: (projectId: string, name: string, dataBase64: string) =>
+    req<PdfMeta>(`/api/projects/${projectId}/pdfs`, {
+      method: "POST", body: JSON.stringify({ name, data_base64: dataBase64 }),
+    }),
+  deleteProjectPdf: (projectId: string, pdfId: string) =>
+    req<{ ok: boolean }>(`/api/projects/${projectId}/pdfs/${pdfId}`, { method: "DELETE" }),
+
+  getCanvas: (projectId: string) => req<Canvas>(`/api/projects/${projectId}/canvas`),
+  saveCanvas: (projectId: string, body: { gender: "female" | "male"; strokes: CanvasStroke[] }) =>
+    req<{ ok: boolean }>(`/api/projects/${projectId}/canvas`, { method: "PUT", body: JSON.stringify(body) }),
+
+  clientProjects: (clientId: string) => req<Project[]>(`/api/clients/${clientId}/projects`),
 };

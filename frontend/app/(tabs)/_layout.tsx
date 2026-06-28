@@ -34,11 +34,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="clients"
+        name="projects"
         options={{
-          title: "Clients",
-          tabBarIcon: ({ color, size }) => <Feather name="users" color={color} size={size - 2} />,
+          title: "Projects",
+          tabBarIcon: ({ color, size }) => <Feather name="layers" color={color} size={size - 2} />,
         }}
+      />
+      <Tabs.Screen
+        name="clients"
+        options={{ href: null }}
       />
     </Tabs>
   );

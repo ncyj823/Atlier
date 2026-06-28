@@ -524,6 +524,163 @@ async def reschedule_event(event_id: str, payload: EventReschedule, background_t
     return EventOut(**ev)
 
 
+# --- Projects ---
+class ProjectCreate(BaseModel):
+    client_id: str
+    title: str
+    delivery_location: Optional[str] = ""
+    deadline: Optional[str] = None  # ISO date string
+    description: Optional[str] = ""
+    total_amount: Optional[float] = 0.0
+    paid_amount: Optional[float] = 0.0
+    status: Optional[Literal["ongoing", "completed"]] = "ongoing"
+    mannequin_gender: Optional[Literal["female", "male"]] = "female"
+
+class ProjectUpdate(BaseModel):
+    title: Optional[str] = None
+    delivery_location: Optional[str] = None
+    deadline: Optional[str] = None
+    description: Optional[str] = None
+    total_amount: Optional[float] = None
+    paid_amount: Optional[float] = None
+    status: Optional[Literal["ongoing", "completed"]] = None
+
+class CanvasSave(BaseModel):
+    gender: Literal["female", "male"]
+    strokes: List[dict]  # [{ d: "M0 0 L10 10", color: "#000", width: 3 }, ...]
+
+@api_router.get("/projects")
+async def list_projects():
+    # Sort by deadline asc (no deadline last), include client name
+    cursor = db.projects.find({}, {"_id": 0}).sort("deadline", 1)
+    items = [d async for d in cursor]
+    # Attach client name
+    client_ids = list({p.get("client_id") for p in items if p.get("client_id")})
+    clients_map: dict = {}
+    if client_ids:
+        async for c in db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}):
+            clients_map[c["id"]] = c["name"]
+    for p in items:
+        p["client_name"] = clients_map.get(p.get("client_id"), "")
+    # Items with no deadline → push to end
+    items.sort(key=lambda p: (p.get("deadline") or "9999-12-31", p.get("created_at", "")))
+    return items
+
+@api_router.post("/projects")
+async def create_project(payload: ProjectCreate):
+    c = await db.clients.find_one({"id": payload.client_id}, {"_id": 0, "id": 1, "name": 1})
+    if not c:
+        raise HTTPException(404, "Client not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "title": payload.title.strip(),
+        "delivery_location": payload.delivery_location or "",
+        "deadline": payload.deadline,
+        "description": payload.description or "",
+        "total_amount": float(payload.total_amount or 0),
+        "paid_amount": float(payload.paid_amount or 0),
+        "status": payload.status or "ongoing",
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    await db.projects.insert_one(doc)
+    # auto-create blank canvas linked to project
+    await db.canvases.insert_one({
+        "project_id": doc["id"],
+        "gender": payload.mannequin_gender or "female",
+        "strokes": [],
+        "updated_at": _now_iso(),
+    })
+    doc.pop("_id", None)
+    doc["client_name"] = c["name"]
+    return doc
+
+@api_router.get("/projects/{project_id}")
+async def get_project(project_id: str):
+    p = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Project not found")
+    c = await db.clients.find_one({"id": p.get("client_id")}, {"_id": 0})
+    pdfs_cursor = db.pdfs.find({"project_id": project_id}, {"_id": 0, "data_base64": 0}).sort("uploaded_at", -1)
+    pdfs = [d async for d in pdfs_cursor]
+    canvas = await db.canvases.find_one({"project_id": project_id}, {"_id": 0}) or {
+        "project_id": project_id, "gender": "female", "strokes": [], "updated_at": _now_iso(),
+    }
+    p["client_name"] = (c or {}).get("name", "")
+    return {"project": p, "client": c, "pdfs": pdfs, "canvas": canvas}
+
+@api_router.put("/projects/{project_id}")
+async def update_project(project_id: str, payload: ProjectUpdate):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        return {"ok": True}
+    update["updated_at"] = _now_iso()
+    res = await db.projects.find_one_and_update(
+        {"id": project_id}, {"$set": update}, projection={"_id": 0}, return_document=True
+    )
+    if not res:
+        raise HTTPException(404, "Project not found")
+    return res
+
+@api_router.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    await db.projects.delete_one({"id": project_id})
+    await db.pdfs.delete_many({"project_id": project_id})
+    await db.canvases.delete_many({"project_id": project_id})
+    return {"ok": True}
+
+@api_router.post("/projects/{project_id}/pdfs")
+async def upload_project_pdf(project_id: str, payload: PDFUpload):
+    p = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1})
+    if not p:
+        raise HTTPException(404, "Project not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "project_id": project_id,
+        "name": payload.name,
+        "data_base64": payload.data_base64,
+        "size_bytes": len(payload.data_base64),
+        "uploaded_at": _now_iso(),
+    }
+    await db.pdfs.insert_one(doc)
+    return {"id": doc["id"], "name": doc["name"], "uploaded_at": doc["uploaded_at"], "size_bytes": doc["size_bytes"]}
+
+@api_router.delete("/projects/{project_id}/pdfs/{pdf_id}")
+async def delete_project_pdf(project_id: str, pdf_id: str):
+    await db.pdfs.delete_one({"id": pdf_id, "project_id": project_id})
+    return {"ok": True}
+
+@api_router.get("/projects/{project_id}/canvas")
+async def get_canvas(project_id: str):
+    canvas = await db.canvases.find_one({"project_id": project_id}, {"_id": 0})
+    if not canvas:
+        canvas = {"project_id": project_id, "gender": "female", "strokes": [], "updated_at": _now_iso()}
+        await db.canvases.insert_one(canvas.copy())
+    return canvas
+
+@api_router.put("/projects/{project_id}/canvas")
+async def save_canvas(project_id: str, payload: CanvasSave):
+    await db.canvases.update_one(
+        {"project_id": project_id},
+        {"$set": {
+            "project_id": project_id,
+            "gender": payload.gender,
+            "strokes": payload.strokes,
+            "updated_at": _now_iso(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True}
+
+@api_router.get("/clients/{client_id}/projects")
+async def client_projects(client_id: str):
+    cursor = db.projects.find({"client_id": client_id}, {"_id": 0}).sort("deadline", 1)
+    items = [d async for d in cursor]
+    items.sort(key=lambda p: (p.get("deadline") or "9999-12-31", p.get("created_at", "")))
+    return items
+
+
 # --- Voice transcription ---
 @api_router.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):

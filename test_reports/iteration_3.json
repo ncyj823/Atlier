@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 3 (Projects redesign) verified end-to-end against public preview. Backend pytest 9/9 PASS in /app/backend/tests/test_projects_api.py: list sorted by deadline asc with client_name attached, POST creates project + auto-linked canvas honoring mannequin_gender ('male' persisted), GET bundle returns project+client+pdfs+canvas, PUT flips status ongoing→completed and is persisted on subsequent GET, POST /api/projects/{id}/pdfs upload + 200 + size_bytes>0 + appears in bundle, PUT/GET /api/projects/{id}/canvas round-trips strokes (d,color,width) and gender, GET /api/clients/{id}/projects returns the project list sorted, plus 404 paths (unknown project, unknown client on create). Frontend (390x844 web preview): bottom tab is labeled 'Projects' with no 'Clients' tab visible, Projects list renders the seeded 'Bridal lehenga' card with client name (ANAÏS MEHTA), location, deadline (Aug 15 2026), progress bar (₹50,000 of ₹150,000 · ₹100,000 pending), and ongoing pill. FAB opens the create modal; picking a client via pick-client → client-option-* + filling field-title/location/deadline/description/total/paid + form-gender-male + tapping save-project routes to /project/{id}. Project detail shows client-link, project-title, Created+Deadline date columns, payment bar with Paid/Remaining amounts, edit-payment button, and toggle-status (flipped ongoing→completed live). open-canvas reveals MannequinCanvas with gender-female/gender-male toggles, canvas-surface, color/width palette, canvas-undo/canvas-clear/canvas-save — mouse-drag drew a stroke and canvas-save fired PUT /api/projects/{id}/canvas → 200. Tapping client-link routes to /client/{id}; client profile shows the stats row (1 PROJECTS / 0 ONGOING / 1 COMPLETED reflecting the live status flip) and the project as a tappable client-project-{id} row.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Projects create modal", "issues": ["On the web preview the Modal's inner ScrollView does not auto-scroll a tap target into view when the Picker dropdown is opened with many clients — long lists may push save-project / form-gender-* below the fold. Real touch scrolling works; consider giving the picker dropdown its own bounded scroll (it already has maxHeight:200 but on narrow viewports the parent still ends up overflow-clipped). Reference: /app/frontend/app/(tabs)/projects.tsx:159-225"]}
+    ],
+    "react_native_issues": [
+      {"component": "Tabs layout", "issue": "Console warning '[Layout children]: Too many screens defined. Route \"clients\" is extraneous.' — _layout.tsx still declares <Tabs.Screen name=\"clients\" href={null} /> but the file route was removed. Either delete the entry or remove the orphan route file. Reference: /app/frontend/app/(tabs)/_layout.tsx:43-46"},
+      {"component": "Pressable / View", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' (RN web). Originates from third-party UI lib or react-native-web defaults. Low priority. Reference: bundled output"}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_projects_api.py", "/app/test_reports/pytest/projects_results.xml"],
+  "action_items": [
+    "Remove the orphan <Tabs.Screen name=\"clients\" href={null} /> entry in /app/frontend/app/(tabs)/_layout.tsx (or delete the /app/frontend/app/(tabs)/clients.tsx file if it still exists) to silence the 'Too many screens defined' warning.",
+    "Optional UX polish: in projects.tsx, when the pick-client dropdown is open, scroll the modal's ScrollView so the dropdown's first option is in view (or render the picker as a separate Modal). This only affects web with many clients.",
+    "Optional: previous iteration_2 nit (calendar day cell 48px width) remains; unrelated to this redesign."
+  ],
+  "critical_code_review_comments": [
+    "server.py:553-567 — list_projects fetches all projects then sorts in Python (deadline-or-9999, created_at) AFTER the Mongo .sort(\"deadline\", 1). The Mongo sort is effectively no-op because the Python re-sort is the source of truth. Consider dropping the Mongo sort or building a proper aggregation. Functionally correct.",
+    "server.py:599-611 — get_project returns canvas under a default shape when missing, but it does not insert a backup canvas (unlike GET /canvas at line 654-660 which upserts). Minor inconsistency — currently every create_project also creates a canvas, so the fallback is rarely hit.",
+    "server.py:556-566 — Sorting key uses created_at as the tie-breaker; missing 'created_at' yields '' which sorts before real timestamps. OK in practice since all docs have created_at.",
+    "project/[id].tsx:58 — uses FileSystem.readAsStringAsync from expo-file-system/legacy. The non-legacy import would be cleaner; legacy path works but should be migrated when the file-system 17+ API is adopted.",
+    "MannequinCanvas — not deeply reviewed in this iteration; PUT canvas round-trips strokes [{d,color,width}] correctly as verified by E2E.",
+    "frontend/.env uses EXPO_PUBLIC_BACKEND_URL (frontend/src/api.ts:1) but the system documents EXPO_BACKEND_URL. Both are present in the repo's .env so it works; just a naming nit."
+  ],
+  "updated_files": ["/app/backend/tests/test_projects_api.py (new — 9 pytest cases for the Projects redesign)"],
+  "success_rate": {"backend": "100% (9/9 pytest in test_projects_api.py)", "frontend": "100% functional on the redesigned Projects flow; one minor web-only modal-scroll quirk noted"},
+  "seed_data_creation": "Used existing seed: 3 demo clients + 1 seeded 'Bridal lehenga' project for Anaïs Mehta. Pytest created/torn-down a TEST_Project Iteration3 project. Frontend test created and then deleted (via toggle-status flow) a TEST_UI Project; the project itself was not deleted via API (cleanup got 403 on the public DELETE — non-blocking).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public preview: https://style-manager-29.preview.emergentagent.com. Backend tests: /app/backend/tests/test_projects_api.py (9 pytest cases) and the legacy /app/backend/tests/test_atelier_api.py (10 cases — still valid since /api/clients/* endpoints remain). Project testIDs in use: projects-title, fab-create-project, open-create-project, project-card-{id}, pick-client, client-option-{id}, field-title/location/deadline/description/total/paid, form-gender-female/male, save-project, project-title, client-link, toggle-status, edit-payment, pay-total/paid, save-pay, open-canvas, toggle-canvas, canvas-surface, canvas-undo, canvas-clear, canvas-save, gender-female/male, client-name, client-project-{id}, pdf-row-{id}. Web-only quirk: when create modal's pick-client dropdown is open with many clients, options end up below the fold; use el.scrollIntoView+click via page.evaluate in Playwright (force=True click alone fails with 'outside of viewport').",
+  "rca_of_issue": "N/A — all targeted features for the Projects redesign verified passing. The only product-side warning surfaced is the orphan 'clients' Tabs.Screen entry in _layout.tsx; functionally harmless (route hidden via href={null}) but noisy in console — see action_items."
+}
