@@ -40,10 +40,6 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Feather name="layers" color={color} size={size - 2} />,
         }}
       />
-      <Tabs.Screen
-        name="clients"
-        options={{ href: null }}
-      />
     </Tabs>
   );
 }

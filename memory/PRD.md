@@ -28,8 +28,19 @@ Personal business management tool for a fashion/design freelancer. Single-user (
 
 ## Open Items / Follow-ups
 - Real Google OAuth (Calendar + Gmail + Meet) — pending user credentials.
-- Voice auto-stops on silence (VAD) — implemented via `expo-audio` metering polling at 200ms with threshold -42dB held for 1.5s; auto-fires Send.
-- One-tap **Send** (parse + create + reminders in one action). Preview confirmation step removed.
-- Red **overload banner** on Today screen when ≥4 meetings; per-event Reschedule sheet offers +1h / +1d / +1w / Tomorrow 10 AM.
-- Backend `PUT /api/events/{id}` reschedules and re-emails the client.
-- Push notifications for reminders — not requested (in-app local reminders only).
+- Real email sending via Resend — pending API key.
+
+## Data Model (current)
+- **clients** — name, email, whatsapp, measurements, notes (used as a contact directory).
+- **projects** — client_id, title, delivery_location, deadline (YYYY-MM-DD), description, total_amount, paid_amount, status (ongoing|completed), created_at, updated_at. Sorted by deadline asc; no-deadline last.
+- **pdfs** — now linked to `project_id` (design sheets per project).
+- **canvases** — one per project, `{ project_id, gender, strokes[{d,color,width}], updated_at }`. Auto-created when a project is created.
+- **events** — unchanged (calendar + reminders).
+- **invoices** — legacy collection from earlier iteration, no longer in the UI but endpoints remain.
+
+## UI structure
+- Tab 1 Today (NL Send + heavy-day overload + reschedule sheet)
+- Tab 2 Calendar (month, mode toggles, bigger cells, scrollable)
+- Tab 3 Projects (sorted by deadline, payment progress, status pills)
+- /project/[id] — payment progress bar, dates, tappable client-link, PDF upload, MannequinCanvas (SVG silhouette + freehand strokes, female/male toggle, color & width palette, undo/clear/save)
+- /client/[id] — client info, total/ongoing/completed counts, list of all projects (tappable)
