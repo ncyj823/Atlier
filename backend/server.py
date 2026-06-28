@@ -20,6 +20,10 @@ from dateutil import parser as date_parser
 import smtplib
 from email.mime.text import MIMEText
 from email.utils import formataddr, parseaddr
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.memory import MemoryJobStore
+
+import google_cal
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
@@ -118,6 +122,99 @@ def _mock_meet_link() -> str:
     b = secrets.token_hex(2)[:4]
     c = secrets.token_hex(2)[:3]
     return f"https://meet.google.com/{a}-{b}-{c}"
+
+# In-process reminder scheduler
+scheduler = AsyncIOScheduler(jobstores={"default": MemoryJobStore()}, timezone=pytz.UTC)
+
+REMINDER_KEY = {
+    "morning_of":  "the morning of",
+    "thirty_min":  "in 30 minutes",
+    "now":         "starting now",
+}
+
+def _send_email_sync_blocking(to: str, subject: str, html: str):
+    """Sync wrapper for use by APScheduler jobs (which run in a thread)."""
+    import asyncio as _aio
+    try:
+        _aio.run(_send_email(to, subject, html))
+    except Exception as e:
+        logger.error(f"reminder send failed: {e}")
+
+def _fire_reminder(event_id: str, kind: str):
+    """APScheduler job — re-loads event from Mongo (no closure on stale data) and emails everyone."""
+    import asyncio as _aio
+    async def _do():
+        ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+        if not ev:
+            return
+        try:
+            dt = date_parser.isoparse(ev["start_iso"])
+            when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
+        except Exception:
+            when_human = ev["start_iso"]
+        label = REMINDER_KEY.get(kind, "soon")
+        subject = f"Reminder · {ev['title']} — {label}"
+        html = _meeting_html(
+            f"{ev['title']} ({label})",
+            when_human,
+            ev.get("meet_link", ""),
+            ev.get("notes", ""),
+        )
+        recipients = []
+        if ev.get("client_email"):
+            recipients.append(ev["client_email"])
+        if GMAIL_USER:
+            recipients.append(GMAIL_USER)
+        for r in set(recipients):
+            await _send_email(r, subject, html)
+    try:
+        _aio.run(_do())
+    except Exception as e:
+        logger.error(f"_fire_reminder failed: {e}")
+
+def schedule_event_reminders(event_id: str, start_iso: str):
+    """Schedule 3 reminders: morning-of (9 AM local), 30 min before, and at start.
+    Cancels any pre-existing reminders for this event first.
+    """
+    # cancel prior
+    for kind in ("morning_of", "thirty_min", "now"):
+        jid = f"rem-{event_id}-{kind}"
+        try:
+            scheduler.remove_job(jid)
+        except Exception:
+            pass
+    try:
+        dt = date_parser.isoparse(start_iso)
+    except Exception:
+        return
+    now = datetime.now(timezone.utc)
+
+    morning = dt.replace(hour=9, minute=0, second=0, microsecond=0)
+    thirty = dt - timedelta(minutes=30)
+    at_time = dt
+
+    for when, kind in [(morning, "morning_of"), (thirty, "thirty_min"), (at_time, "now")]:
+        if when <= now + timedelta(seconds=10):
+            continue
+        try:
+            scheduler.add_job(
+                _fire_reminder,
+                "date",
+                run_date=when,
+                args=[event_id, kind],
+                id=f"rem-{event_id}-{kind}",
+                replace_existing=True,
+                misfire_grace_time=600,
+            )
+        except Exception as e:
+            logger.error(f"schedule reminder failed ({kind}): {e}")
+
+def cancel_event_reminders(event_id: str):
+    for kind in ("morning_of", "thirty_min", "now"):
+        try:
+            scheduler.remove_job(f"rem-{event_id}-{kind}")
+        except Exception:
+            pass
 
 def _reminders_for(start_iso: str) -> List[str]:
     try:
@@ -464,8 +561,39 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
             if not client_email:
                 client_email = c.get("email", "")
 
-    meet_link = _mock_meet_link()
     reminders = _reminders_for(payload.start_iso)
+    # Compute end_iso for Google
+    try:
+        start_dt = date_parser.isoparse(payload.start_iso)
+        end_iso = (start_dt + timedelta(minutes=payload.duration_minutes)).isoformat()
+        tz = start_dt.tzinfo.tzname(start_dt) if start_dt.tzinfo else "Asia/Kolkata"
+        # Use a real timezone name fallback
+        if not tz or tz.startswith("UTC"):
+            tz = "Asia/Kolkata"
+    except Exception:
+        end_iso = payload.start_iso
+        tz = "Asia/Kolkata"
+
+    google_event_id = ""
+    meet_link = ""
+    html_link = ""
+    if google_cal._is_configured() and payload.mode != "personal":
+        gres = google_cal.create_meeting(
+            summary=payload.title.strip(),
+            description=(payload.notes or ""),
+            start_iso=payload.start_iso,
+            end_iso=end_iso,
+            timezone=tz,
+            attendee_emails=[client_email] if client_email else [],
+            with_meet=payload.mode in ("design_call", "measurement_call"),
+        )
+        if gres.get("ok"):
+            google_event_id = gres.get("event_id", "")
+            meet_link = gres.get("meet_link", "")
+            html_link = gres.get("html_link", "")
+    if not meet_link:
+        meet_link = _mock_meet_link()
+
     doc = {
         "id": str(uuid.uuid4()),
         "title": payload.title.strip(),
@@ -477,19 +605,30 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
         "client_email": client_email,
         "notes": payload.notes or "",
         "meet_link": meet_link,
+        "google_event_id": google_event_id,
+        "google_html_link": html_link,
         "reminders": reminders,
         "created_at": _now_iso(),
     }
     await db.events.insert_one(doc)
-    # Send invite email if we have client email
+
+    # Schedule 3 email reminders (morning-of / 30 min / on-schedule) for client + me
+    schedule_event_reminders(doc["id"], payload.start_iso)
+
+    # Send "scheduled now" notice email immediately (to both)
+    try:
+        dt = date_parser.isoparse(payload.start_iso)
+        when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
+    except Exception:
+        when_human = payload.start_iso
+    invite_html = _meeting_html(doc["title"], when_human, meet_link, doc["notes"])
+    recipients = set()
     if client_email and payload.mode != "personal":
-        try:
-            dt = date_parser.isoparse(payload.start_iso)
-            when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
-        except Exception:
-            when_human = payload.start_iso
-        html = _meeting_html(doc["title"], when_human, meet_link, doc["notes"])
-        background_tasks.add_task(_send_email_sync, client_email, f"{doc['title']} — Meeting invite", html)
+        recipients.add(client_email)
+    if GMAIL_USER:
+        recipients.add(GMAIL_USER)
+    for r in recipients:
+        background_tasks.add_task(_send_email_sync, r, f"{doc['title']} — Scheduled", invite_html)
 
     doc.pop("_id", None)
     return EventOut(**doc)
@@ -504,6 +643,10 @@ async def list_events(from_iso: Optional[str] = None, to_iso: Optional[str] = No
 
 @api_router.delete("/events/{event_id}")
 async def delete_event(event_id: str):
+    ev = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if ev and ev.get("google_event_id"):
+        google_cal.delete_event(ev["google_event_id"])
+    cancel_event_reminders(event_id)
     await db.events.delete_one({"id": event_id})
     return {"ok": True}
 
@@ -516,24 +659,97 @@ async def reschedule_event(event_id: str, payload: EventReschedule, background_t
     if not ev:
         raise HTTPException(404, "Event not found")
     reminders = _reminders_for(payload.start_iso)
+    # Update on Google
+    try:
+        new_start = date_parser.isoparse(payload.start_iso)
+        new_end = (new_start + timedelta(minutes=ev.get("duration_minutes", 30))).isoformat()
+        tz = new_start.tzinfo.tzname(new_start) if new_start.tzinfo else "Asia/Kolkata"
+        if not tz or tz.startswith("UTC"):
+            tz = "Asia/Kolkata"
+    except Exception:
+        new_end = payload.start_iso
+        tz = "Asia/Kolkata"
+    if ev.get("google_event_id"):
+        google_cal.update_event_time(ev["google_event_id"], payload.start_iso, new_end, tz)
+
     await db.events.update_one(
         {"id": event_id},
         {"$set": {"start_iso": payload.start_iso, "reminders": reminders}},
     )
     ev["start_iso"] = payload.start_iso
     ev["reminders"] = reminders
+    # Re-schedule reminders for new time
+    schedule_event_reminders(event_id, payload.start_iso)
+    # Email both about reschedule
+    try:
+        dt = date_parser.isoparse(payload.start_iso)
+        when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
+    except Exception:
+        when_human = payload.start_iso
+    html = _meeting_html(ev["title"], when_human, ev.get("meet_link", ""), (ev.get("notes", "") or "") + " (Rescheduled)")
+    recipients = set()
     if ev.get("client_email") and ev.get("mode") != "personal":
-        try:
-            dt = date_parser.isoparse(payload.start_iso)
-            when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
-        except Exception:
-            when_human = payload.start_iso
-        html = _meeting_html(ev["title"], when_human, ev.get("meet_link", ""), ev.get("notes", "") + " (Rescheduled)")
-        background_tasks.add_task(_send_email_sync, ev["client_email"], f"{ev['title']} — Rescheduled", html)
+        recipients.add(ev["client_email"])
+    if GMAIL_USER:
+        recipients.add(GMAIL_USER)
+    for r in recipients:
+        background_tasks.add_task(_send_email_sync, r, f"{ev['title']} — Rescheduled", html)
     return EventOut(**ev)
 
 
 # --- Projects ---
+async def _ensure_sending_event(project_id: str, title: str, client_id: Optional[str], deadline: str):
+    """Create or update a 'Sending Pieces' calendar event 2 days before deadline."""
+    try:
+        # Deadline can be YYYY-MM-DD or ISO datetime
+        if len(deadline) == 10:
+            dl = datetime.fromisoformat(deadline + "T10:00:00").replace(tzinfo=pytz.timezone("Asia/Kolkata"))
+        else:
+            dl = date_parser.isoparse(deadline)
+            if dl.tzinfo is None:
+                dl = dl.replace(tzinfo=pytz.timezone("Asia/Kolkata"))
+        start = dl - timedelta(days=2)
+    except Exception as e:
+        logger.error(f"sending event date parse failed: {e}")
+        return
+    client_name = ""
+    if client_id:
+        c = await db.clients.find_one({"id": client_id}, {"_id": 0, "name": 1})
+        if c:
+            client_name = c["name"]
+    # Find existing auto-created event for this project
+    existing = await db.events.find_one({"project_id": project_id, "auto_kind": "sending_pieces"}, {"_id": 0})
+    ev_title = f"Send pieces — {title}"
+    if existing:
+        await db.events.update_one(
+            {"id": existing["id"]},
+            {"$set": {"start_iso": start.isoformat(), "title": ev_title, "client_name": client_name}},
+        )
+        # reschedule reminders for it
+        schedule_event_reminders(existing["id"], start.isoformat())
+        return
+    new_id = str(uuid.uuid4())
+    await db.events.insert_one({
+        "id": new_id,
+        "title": ev_title,
+        "mode": "sending_pieces",
+        "start_iso": start.isoformat(),
+        "duration_minutes": 60,
+        "client_id": client_id,
+        "client_name": client_name,
+        "client_email": "",
+        "notes": "Auto-scheduled 2 days before project deadline.",
+        "meet_link": "",
+        "google_event_id": "",
+        "google_html_link": "",
+        "reminders": _reminders_for(start.isoformat()),
+        "auto_kind": "sending_pieces",
+        "project_id": project_id,
+        "created_at": _now_iso(),
+    })
+    schedule_event_reminders(new_id, start.isoformat())
+
+
 class ProjectCreate(BaseModel):
     client_id: str
     title: str
@@ -580,8 +796,18 @@ async def create_project(payload: ProjectCreate):
     c = await db.clients.find_one({"id": payload.client_id}, {"_id": 0, "id": 1, "name": 1})
     if not c:
         raise HTTPException(404, "Client not found")
+    # Sequential ATL-NNNN UID via counter doc
+    counter = await db.counters.find_one_and_update(
+        {"_id": "project"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    seq = counter.get("seq", 1)
+    uid = f"ATL-{seq:04d}"
     doc = {
         "id": str(uuid.uuid4()),
+        "uid": uid,
         "client_id": payload.client_id,
         "title": payload.title.strip(),
         "delivery_location": payload.delivery_location or "",
@@ -594,13 +820,15 @@ async def create_project(payload: ProjectCreate):
         "updated_at": _now_iso(),
     }
     await db.projects.insert_one(doc)
-    # auto-create blank canvas linked to project
     await db.canvases.insert_one({
         "project_id": doc["id"],
         "gender": payload.mannequin_gender or "female",
         "strokes": [],
         "updated_at": _now_iso(),
     })
+    # Auto-create "Sending Pieces" event 2 days before deadline
+    if payload.deadline:
+        await _ensure_sending_event(doc["id"], doc["title"], payload.client_id, payload.deadline)
     doc.pop("_id", None)
     doc["client_name"] = c["name"]
     return doc
@@ -630,6 +858,9 @@ async def update_project(project_id: str, payload: ProjectUpdate):
     )
     if not res:
         raise HTTPException(404, "Project not found")
+    # If deadline was set/changed, refresh the auto sending event
+    if "deadline" in update and update["deadline"]:
+        await _ensure_sending_event(project_id, res.get("title", "Project"), res.get("client_id"), update["deadline"])
     return res
 
 @api_router.delete("/projects/{project_id}")
@@ -768,6 +999,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_scheduler():
+    try:
+        scheduler.start()
+        logger.info("APScheduler started")
+    except Exception as e:
+        logger.error(f"scheduler start failed: {e}")
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     client_mongo.close()

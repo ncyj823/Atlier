@@ -49,6 +49,7 @@ export type PdfMeta = { id: string; name: string; uploaded_at: string; size_byte
 
 export type Project = {
   id: string;
+  uid?: string;
   client_id: string;
   client_name?: string;
   title: string;

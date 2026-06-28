@@ -1,29 +1,18 @@
 import React, { useMemo, useRef, useState } from "react";
 import { View, StyleSheet, PanResponder, Pressable, Text } from "react-native";
-import Svg, { Path, G } from "react-native-svg";
+import Svg, { Path, Image as SvgImage } from "react-native-svg";
 import { Feather } from "@expo/vector-icons";
 import { colors, spacing } from "@/src/theme";
 import type { CanvasStroke } from "@/src/api";
 
-// Mannequin silhouette (viewBox 200x500), neutral garment block lines.
-const MANNEQUIN: Record<"female" | "male", string[]> = {
-  female: [
-    "M100 30 c-14 0 -25 11 -25 25 s11 25 25 25 25 -11 25 -25 -11 -25 -25 -25 z", // head
-    "M82 80 L118 80 L122 105 L78 105 Z", // neck/shoulders top
-    "M60 110 L140 110 L150 200 L130 240 L70 240 L50 200 Z", // torso (hourglass)
-    "M70 240 L130 240 L138 320 L120 410 L112 480 L88 480 L80 410 L62 320 Z", // hips → legs
-    "M50 110 L20 200 L26 260 L40 195 Z", // left arm
-    "M150 110 L180 200 L174 260 L160 195 Z", // right arm
-  ],
-  male: [
-    "M100 30 c-13 0 -23 10 -23 23 s10 23 23 23 23 -10 23 -23 -10 -23 -23 -23 z",
-    "M80 78 L120 78 L124 100 L76 100 Z",
-    "M50 105 L150 105 L156 220 L150 250 L50 250 L44 220 Z",
-    "M50 250 L150 250 L144 360 L132 480 L108 480 L102 360 L98 360 L92 480 L68 480 L56 360 Z",
-    "M44 105 L18 210 L26 270 L40 200 Z",
-    "M156 105 L182 210 L174 270 L160 200 Z",
-  ],
+// User-provided mannequin sheets (front + back view inside a single image).
+const MANNEQUIN_IMAGES: Record<"female" | "male", string> = {
+  female: "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/hjjjjjiv_image.png",
+  male:   "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/dcd23zoo_image.png",
 };
+
+const STROKE_COLOR = "#1A1918";  // single brand-friendly ink
+const STROKE_WIDTH = 3;          // medium, round tip
 
 type Props = {
   initial: { gender: "female" | "male"; strokes: CanvasStroke[] };
@@ -31,13 +20,12 @@ type Props = {
   height?: number;
 };
 
-export default function MannequinCanvas({ initial, onSave, height = 480 }: Props) {
+export default function MannequinCanvas({ initial, onSave, height = 520 }: Props) {
   const [gender, setGender] = useState<"female" | "male">(initial.gender || "female");
   const [strokes, setStrokes] = useState<CanvasStroke[]>(initial.strokes || []);
   const [current, setCurrent] = useState<string>("");
-  const [color, setColor] = useState("#A3523B");
-  const [width, setWidth] = useState(3);
   const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number>(0);
   const currentRef = useRef("");
 
   const responder = useMemo(() => PanResponder.create({
@@ -56,22 +44,26 @@ export default function MannequinCanvas({ initial, onSave, height = 480 }: Props
     onPanResponderRelease: () => {
       const d = currentRef.current;
       if (d && d.includes("L")) {
-        setStrokes((prev) => [...prev, { d, color, width }]);
+        setStrokes((prev) => [...prev, { d, color: STROKE_COLOR, width: STROKE_WIDTH }]);
       }
       currentRef.current = "";
       setCurrent("");
     },
-  }), [color, width]);
+  }), []);
 
   const undo = () => setStrokes((s) => s.slice(0, -1));
-  const clear = () => setStrokes([]);
 
   const handleSave = async () => {
     setSaving(true);
-    try { await onSave({ gender, strokes }); } finally { setSaving(false); }
+    try {
+      await onSave({ gender, strokes });
+      setSavedAt(Date.now());
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const PALETTE = [colors.brand, "#1A1918", "#5C6B5D", "#B38A58", "#FFFFFF"];
+  const justSaved = savedAt && Date.now() - savedAt < 2500;
 
   return (
     <View style={styles.wrap} testID="mannequin-canvas">
@@ -94,42 +86,13 @@ export default function MannequinCanvas({ initial, onSave, height = 480 }: Props
         </View>
 
         <View style={styles.tools}>
-          <Pressable testID="canvas-undo" onPress={undo} style={styles.toolBtn}>
+          <Pressable testID="canvas-undo" onPress={undo} disabled={strokes.length === 0} style={[styles.toolBtn, strokes.length === 0 && { opacity: 0.4 }]}>
             <Feather name="rotate-ccw" color={colors.onSurface} size={16} />
           </Pressable>
-          <Pressable testID="canvas-clear" onPress={clear} style={styles.toolBtn}>
-            <Feather name="trash-2" color={colors.onSurface} size={16} />
-          </Pressable>
           <Pressable testID="canvas-save" onPress={handleSave} disabled={saving} style={styles.saveBtn}>
-            <Text style={styles.saveBtnText}>{saving ? "Saving…" : "Save"}</Text>
+            <Text style={styles.saveBtnText}>{saving ? "Saving…" : justSaved ? "Saved ✓" : "Save"}</Text>
           </Pressable>
         </View>
-      </View>
-
-      <View style={styles.palette}>
-        {PALETTE.map((c) => (
-          <Pressable
-            key={c}
-            testID={`color-${c}`}
-            onPress={() => setColor(c)}
-            style={[
-              styles.colorChip,
-              { backgroundColor: c, borderColor: c === "#FFFFFF" ? colors.borderStrong : c },
-              color === c && styles.colorChipActive,
-            ]}
-          />
-        ))}
-        <View style={{ flex: 1 }} />
-        {[2, 3, 5, 8].map((w) => (
-          <Pressable
-            key={w}
-            testID={`width-${w}`}
-            onPress={() => setWidth(w)}
-            style={[styles.widthChip, width === w && styles.widthChipActive]}
-          >
-            <View style={{ width: w * 2, height: w, borderRadius: w, backgroundColor: colors.onSurface }} />
-          </Pressable>
-        ))}
       </View>
 
       <View
@@ -138,27 +101,51 @@ export default function MannequinCanvas({ initial, onSave, height = 480 }: Props
         testID="canvas-surface"
       >
         <Svg width="100%" height="100%" viewBox="0 0 200 500" preserveAspectRatio="xMidYMid meet">
-          <G stroke={colors.borderStrong} strokeWidth={1} fill="none">
-            {MANNEQUIN[gender].map((d, i) => (
-              <Path key={`m-${i}`} d={d} />
-            ))}
-          </G>
+          <SvgImage
+            href={MANNEQUIN_IMAGES[gender]}
+            x="0"
+            y="0"
+            width="200"
+            height="500"
+            preserveAspectRatio="xMidYMid meet"
+          />
         </Svg>
         <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
           {strokes.map((s, i) => (
-            <Path key={`s-${i}`} d={s.d} stroke={s.color} strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            <Path
+              key={`s-${i}`}
+              d={s.d}
+              stroke={STROKE_COLOR}
+              strokeWidth={STROKE_WIDTH}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           ))}
           {current ? (
-            <Path d={current} stroke={color} strokeWidth={width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            <Path
+              d={current}
+              stroke={STROKE_COLOR}
+              strokeWidth={STROKE_WIDTH}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           ) : null}
         </Svg>
       </View>
+
+      <Text style={styles.hint}>
+        {strokes.length === 0
+          ? "Draw on the mannequin. Tap Save to keep your sketch."
+          : `${strokes.length} stroke${strokes.length === 1 ? "" : "s"} · drawing auto-keeps until you tap Save`}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surfaceSecondary },
+  wrap: { borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
   toolbar: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
@@ -174,11 +161,6 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: colors.brand, paddingHorizontal: spacing.md, paddingVertical: 8 },
   saveBtnText: { color: "#fff", fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
 
-  palette: { flexDirection: "row", alignItems: "center", gap: 6, padding: spacing.sm, backgroundColor: colors.surface, borderBottomWidth: 1, borderColor: colors.border },
-  colorChip: { width: 22, height: 22, borderRadius: 11, borderWidth: 1 },
-  colorChipActive: { transform: [{ scale: 1.15 }], borderWidth: 2, borderColor: colors.onSurface },
-  widthChip: { padding: 6, borderWidth: 1, borderColor: colors.border, minWidth: 28, alignItems: "center", justifyContent: "center" },
-  widthChipActive: { borderColor: colors.brand },
-
-  canvas: { backgroundColor: colors.surface },
+  canvas: { backgroundColor: "#fff" },
+  hint: { fontSize: 11, color: colors.onSurfaceTertiary, padding: spacing.sm, textAlign: "center", borderTopWidth: 1, borderColor: colors.border },
 });

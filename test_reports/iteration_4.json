@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 4 full-stack testing. Backend: all 8 pytest cases pass (UID ATL-NNNN sequential, auto sending_pieces event 2 days before deadline, deadline-change updates existing event without duplicates, design_call returns meet link via Google fallback to mock, list windows). APScheduler started log confirmed in backend.err.log. Frontend Projects card redesign verified — large Georgia serif client name on top, small italic project title below, ATL-XXXX badge in brand color on the right (visible on newly-created project ATL-0001; legacy pre-iter4 projects lack uid as expected). Mannequin canvas confirmed simplified — Female/Male toggle, Undo + Save only, no color/width palettes, Save round-trips to backend (SAVED ✓ shown). HOWEVER one HIGH-priority frontend asset bug: the 'female' mannequin background image is NOT a female silhouette PNG — it is a screenshot of a Google App-Passwords page. The wrong file was uploaded to customer-assets for the female mannequin URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MannequinCanvas (female asset)",
+        "issue": "The female mannequin background image at https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/hjjjjjiv_image.png renders a Google Account 'App passwords' screenshot instead of a female silhouette. Wrong asset uploaded. File: /app/frontend/src/MannequinCanvas.tsx:10. Male asset (dcd23zoo_image.png) was not loaded in this run — recommend manually verifying it too.",
+        "testID": "canvas-surface",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Projects list card",
+        "issues": [
+          "Status pill currently sits at top-right and the ATL-XXXX UID badge sits at the bottom-right of a 2nd row. Spec phrasing 'UID badge in brand color on the right' is satisfied, but layout puts the badge and the status pill on different rows. If the design intent was UID badge top-right alongside the client name, consider swapping. (cosmetic, not a bug)."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "Re-upload the correct female silhouette PNG to replace https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/hjjjjjiv_image.png OR update MANNEQUIN_IMAGES['female'] in /app/frontend/src/MannequinCanvas.tsx to point at the correct asset URL.",
+    "Manually verify the male mannequin asset (dcd23zoo_image.png) is also a male silhouette — could not be triggered in this run as canvas was opened in 'female' default mode.",
+    "(Optional) Consider moving the ATL-XXXX UID badge into the top-right row of the project card so it sits with/next to the status pill for a cleaner hierarchy."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1000 lines — consider splitting into routers (clients, events, projects, share) for maintainability.",
+    "_send_email_sync uses asyncio.run inside FastAPI background tasks; if a request hops between events this is fine, but it spins up a new event loop per email — acceptable given low volume.",
+    "Mongo _id consistently excluded across endpoints (good).",
+    "APScheduler uses MemoryJobStore — reminders are lost on backend restart. Acceptable for iteration 4 since the user noted Supabase migration is queued; flag for the next iteration to switch to MongoDBJobStore or persisted scheduling."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "~85% — card redesign + canvas wiring work; female mannequin image asset is wrong"},
+  "seed_data_creation": "Pytest creates TEST_* clients, projects, and auto sending_pieces events, then deletes them in teardown. One residual test artifact (UID smoke test project ATL-0001) exists from a prior manual run — harmless.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend feature parity for iteration 4 is solid. The only blocking issue is the female mannequin PNG asset showing a Google App Passwords screenshot — verify the male PNG too. Reminder scheduling is in-memory only; on backend restart, scheduled reminders are lost (call out when Supabase / persistence is added next iteration).",
+  "rca_of_issue": "Female mannequin image: the asset URL in MannequinCanvas.tsx:10 (hjjjjjiv_image.png) was uploaded with the wrong file content — the customer-assets host returns a Google App-Password screenshot. Reproduction: open any project → tap 'Open' under Mannequin Canvas → female silhouette area shows the wrong image. Fix: re-upload the correct female silhouette PNG to the same URL OR change the URL in MANNEQUIN_IMAGES to a correctly-uploaded asset."
+}

@@ -111,14 +111,17 @@ export default function ProjectsScreen() {
                 style={styles.card}
               >
                 <View style={styles.cardTopRow}>
-                  <Text style={styles.cardClient}>{item.client_name || "—"}</Text>
+                  <Text style={styles.cardClient} numberOfLines={1}>{item.client_name || "—"}</Text>
                   <View style={[styles.statusPill, item.status === "completed" && styles.statusPillDone]}>
                     <Text style={[styles.statusText, item.status === "completed" && { color: colors.success }]}>
                       {item.status}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.cardTitle}>{item.title}</Text>
+                <View style={styles.cardSubRow}>
+                  <Text style={styles.cardTitle}>{item.title}</Text>
+                  {item.uid ? <Text style={styles.cardUid}>{item.uid}</Text> : null}
+                </View>
                 <View style={styles.cardMetaRow}>
                   <Feather name="map-pin" size={11} color={colors.onSurfaceTertiary} />
                   <Text style={styles.cardMetaText}>{item.delivery_location || "No location"}</Text>
@@ -257,14 +260,16 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.onSurfaceTertiary, fontStyle: "italic", textAlign: "center" },
 
   card: {
-    paddingVertical: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.sm,
+    paddingVertical: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, gap: spacing.xs,
   },
-  cardTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cardClient: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 11, color: colors.brand },
+  cardTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
+  cardClient: { flex: 1, fontFamily: "Georgia", fontSize: 24, color: colors.onSurface, lineHeight: 28 },
+  cardSubRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", marginTop: 2, marginBottom: 4 },
+  cardTitle: { fontSize: 13, color: colors.onSurfaceSecondary, fontStyle: "italic", flex: 1 },
+  cardUid: { fontSize: 10, letterSpacing: 1.5, color: colors.brand, marginLeft: spacing.sm },
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 999 },
   statusPillDone: { borderColor: colors.success },
   statusText: { fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: colors.onSurfaceSecondary },
-  cardTitle: { fontFamily: "Georgia", fontSize: 22, color: colors.onSurface },
   cardMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
   cardMetaText: { fontSize: 12, color: colors.onSurfaceSecondary },
   dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: colors.onSurfaceTertiary, marginHorizontal: 4 },

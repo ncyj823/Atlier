@@ -46,9 +46,9 @@ export async function scheduleEventReminders(
   const start = new Date(startIso);
   const now = Date.now();
   const offsets = [
-    { ms: 24 * 60 * 60 * 1000, label: "Tomorrow" },
-    { ms: 60 * 60 * 1000, label: "In 1 hour" },
-    { ms: 15 * 60 * 1000, label: "In 15 minutes" },
+    { ms: 24 * 60 * 60 * 1000, label: "Morning of" },
+    { ms: 30 * 60 * 1000, label: "In 30 minutes" },
+    { ms: 0, label: "Starting now" },
   ];
   const ids: string[] = [];
   for (const o of offsets) {
