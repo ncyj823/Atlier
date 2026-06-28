@@ -7,8 +7,8 @@ import type { CanvasStroke } from "@/src/api";
 
 // User-provided mannequin sheets (front + back view inside a single image).
 const MANNEQUIN_IMAGES: Record<"female" | "male", string> = {
-  female: "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/hjjjjjiv_image.png",
-  male:   "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/dcd23zoo_image.png",
+  female: "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/dcd23zoo_image.png",
+  male:   "https://customer-assets.emergentagent.com/job_style-manager-29/artifacts/foj8l28z_image.png",
 };
 
 const STROKE_COLOR = "#1A1918";  // single brand-friendly ink

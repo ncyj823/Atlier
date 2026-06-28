@@ -1,46 +1,33 @@
 # Atelier — Fashion Freelancer Business Management App
 
 ## Product
-Personal business management tool for a fashion/design freelancer. Single-user (no auth). Editorial mobile app built with Expo Router (SDK 54) + FastAPI + MongoDB.
+Personal business management tool for a fashion/design freelancer. Single-user (no auth). Editorial mobile app built with Expo Router (SDK 54) + FastAPI + MongoDB. Iteration 4 added Google Calendar/Meet real integration, sequential project UIDs, auto-deadline reminders, email reminders, and an image-based mannequin canvas.
 
-## Core Features
-1. **Smart Scheduling (NL → Event)** — Type "Schedule a design call for Anaïs at 6pm IST on coming Wednesday". Claude Sonnet 4.5 (via Emergent Universal LLM key) parses into structured event (title, mode, client, datetime, tz). Backend auto-generates a mock Google Meet link, computes 3 reminders (1d / 1h / 15m before), and emails the client.
-2. **Client Profile Manager** — Create clients with name, email, WhatsApp, notes and measurements (Bust/Waist/Hip/Shoulder). Per-client: PDF design sheets uploads (base64) sorted by date, invoice table with pending/cleared status. Updating an invoice item auto-emails the client. Each profile gets a shareable read-only HTML URL.
-3. **Color-Coded Calendar** — Month grid with toggleable mode chips: Design Call (Terracotta), Measurement Call (Ochre), Sending Pieces (Sage), Personal (Warm Grey). Day cells show colored dots, tap to view that day's events.
+## Tabs
+1. **Today** — NL Send composer (Claude Sonnet 4.5), voice (Whisper), heavy-day red banner, per-event Reschedule.
+2. **Calendar** — month grid, mode toggles, bar markers, sticky header.
+3. **Projects** — sorted by deadline asc. Card: **client name LARGE serif**, project title small italic, **ATL-NNNN** UID badge, payment progress bar, ongoing/completed pill.
 
-## Tech Stack
-- **Frontend**: Expo Router (SDK 54), React Native, expo-document-picker, expo-file-system, react-native-safe-area-context, @expo/vector-icons (Feather), expo-haptics.
-- **Backend**: FastAPI, Motor (MongoDB), emergentintegrations + Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`), Resend for emails (MOCKED — logs to console when `RESEND_API_KEY` is empty), dateutil/pytz for timezones.
-- **Storage**: MongoDB collections — clients, events, pdfs (base64), invoices, share_tokens.
+## Routes
+- `/project/[id]` — payment progress, dates, tappable client link, PDFs, **Mannequin Canvas** (uploaded female + male croquis, single black ink, round caps, Undo + Save).
+- `/client/[id]` — client info, project stats, tappable project list.
 
 ## Integrations
-- **Claude Sonnet 4.5** via Emergent Universal LLM Key (already configured in backend `.env`).
-- **Resend** — env `RESEND_API_KEY` left blank → emails are MOCKED (logged). User can add real key later.
-- **Google Meet / Calendar / Gmail** — MOCKED (generates Meet-style links, no real Calendar API call). User opted to add real OAuth in a follow-up iteration.
+- **Claude Sonnet 4.5** (Emergent LLM key) — NL parsing of scheduling commands.
+- **OpenAI Whisper-1** (Emergent LLM key) — voice → text.
+- **Gmail SMTP** (`nikhil.dg2003@gmail.com` + app password) — meeting invites, reschedules, invoice updates, scheduled reminders.
+- **Google Calendar API + Meet** — creates real events with `conferenceData.createRequest` for real Meet links; adds client + me as attendees so Google auto-emails them. ⚠ Refresh token currently returns `unauthorized_client` — user is regenerating via OAuth Playground with correct client. System gracefully falls back to mock meet links until fixed.
+- **APScheduler** (in-memory) — schedules 3 reminder emails per event: **morning-of (9 AM local), 30 min before, on schedule**. Emails go to client + GMAIL_USER.
 
-## Endpoints (prefix `/api`)
-- `POST /schedule/parse` `POST /events` `GET /events` `DELETE /events/{id}`
-- `GET/POST/PUT/DELETE /clients[/{id}]`
-- `POST/DELETE /clients/{id}/pdfs[/{pdf_id}]` `GET /clients/{id}/pdfs/{pdf_id}`
-- `POST/PUT/DELETE /clients/{id}/invoices/items[/{item_id}]`
-- `POST /clients/{id}/share` → returns `{token, url}`; `GET /share/{token}` returns public HTML page
-- `POST /_seed` — seeds 3 demo clients
+## Auto behaviors
+- Each project gets sequential `uid` `ATL-NNNN` via counter doc.
+- When a project is created or its deadline changes, an event with `mode="sending_pieces"` is auto-created/updated 2 days before the deadline (idempotent — never duplicates).
+- Event create/reschedule/delete syncs to Google Calendar (+ Meet) when configured.
 
-## Open Items / Follow-ups
-- Real Google OAuth (Calendar + Gmail + Meet) — pending user credentials.
-- Real email sending via Resend — pending API key.
+## Data Model
+- clients, projects (with uid + counter), events (with auto_kind, project_id, google_event_id), pdfs (project_id), canvases (project_id, gender, strokes), share_tokens, invoices (legacy).
 
-## Data Model (current)
-- **clients** — name, email, whatsapp, measurements, notes (used as a contact directory).
-- **projects** — client_id, title, delivery_location, deadline (YYYY-MM-DD), description, total_amount, paid_amount, status (ongoing|completed), created_at, updated_at. Sorted by deadline asc; no-deadline last.
-- **pdfs** — now linked to `project_id` (design sheets per project).
-- **canvases** — one per project, `{ project_id, gender, strokes[{d,color,width}], updated_at }`. Auto-created when a project is created.
-- **events** — unchanged (calendar + reminders).
-- **invoices** — legacy collection from earlier iteration, no longer in the UI but endpoints remain.
-
-## UI structure
-- Tab 1 Today (NL Send + heavy-day overload + reschedule sheet)
-- Tab 2 Calendar (month, mode toggles, bigger cells, scrollable)
-- Tab 3 Projects (sorted by deadline, payment progress, status pills)
-- /project/[id] — payment progress bar, dates, tappable client-link, PDF upload, MannequinCanvas (SVG silhouette + freehand strokes, female/male toggle, color & width palette, undo/clear/save)
-- /client/[id] — client info, total/ongoing/completed counts, list of all projects (tappable)
+## Open Items
+- ⏳ **Supabase migration** — creds in `.env`, full Mongo → Postgres + Supabase Storage rewrite deferred to next session.
+- ⏳ **Google OAuth refresh token** — user regenerating with correct client.
+- APScheduler uses MemoryJobStore — reminders are lost on backend restart. After Supabase migration, switch to a persistent jobstore.
