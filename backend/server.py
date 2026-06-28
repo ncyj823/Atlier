@@ -17,7 +17,9 @@ from datetime import datetime, timezone, timedelta
 
 import pytz
 from dateutil import parser as date_parser
-import resend
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formataddr, parseaddr
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
@@ -31,12 +33,10 @@ client_mongo = AsyncIOMotorClient(mongo_url)
 db = client_mongo[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '').strip()
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'Atelier <onboarding@resend.dev>')
+GMAIL_USER = os.environ.get('GMAIL_USER', '').strip()
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', '').strip().replace(' ', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', f'Atelier <{GMAIL_USER}>' if GMAIL_USER else 'Atelier')
 PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', '')
-
-if RESEND_API_KEY:
-    resend.api_key = RESEND_API_KEY
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -133,15 +133,24 @@ def _reminders_for(start_iso: str) -> List[str]:
 async def _send_email(to: str, subject: str, html: str) -> dict:
     if not to:
         return {"sent": False, "reason": "no recipient"}
-    if not RESEND_API_KEY:
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         logger.info(f"[MOCKED EMAIL] to={to} subject={subject}")
         return {"sent": True, "mocked": True}
     try:
-        params = {"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html}
-        r = resend.Emails.send(params)
-        return {"sent": True, "id": r.get("id") if isinstance(r, dict) else None}
+        msg = MIMEText(html, "html", "utf-8")
+        msg["Subject"] = subject
+        # Parse "Name <addr>" or fall back to bare addr
+        sender_name, sender_addr = parseaddr(SENDER_EMAIL)
+        if not sender_addr:
+            sender_addr = GMAIL_USER
+        msg["From"] = formataddr((sender_name or "Atelier", sender_addr))
+        msg["To"] = to
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as smtp:
+            smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            smtp.sendmail(GMAIL_USER, [to], msg.as_string())
+        return {"sent": True}
     except Exception as e:
-        logger.error(f"resend send failed: {e}")
+        logger.error(f"gmail smtp send failed: {e}")
         return {"sent": False, "error": str(e)}
 
 def _meeting_html(title: str, when_human: str, meet_link: str, notes: str = "") -> str:
