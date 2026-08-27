@@ -1,9 +1,17 @@
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const API_KEY = process.env.EXPO_PUBLIC_API_KEY || "";
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers = new Headers(opts.headers || {});
+  headers.set("Content-Type", "application/json");
+
+  if (API_KEY) {
+    headers.set("X-API-Key", API_KEY);
+  }
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
+    headers,
   });
   if (!res.ok) {
     const txt = await res.text();

@@ -147,13 +147,14 @@ export default function TodayScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.surface }}
+      style={{ flex: 1, backgroundColor: colors.surface, overflow: "hidden" }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingTop: insets.top + spacing.lg, paddingBottom: spacing.xxxl }]}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadToday} tintColor={colors.brand} />}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <Text style={styles.kicker} testID="today-kicker">Atelier · Today</Text>
         <Text style={styles.h1} testID="today-date">{today}</Text>
