@@ -14,13 +14,17 @@ import base64
 import pytest
 import requests
 
-BASE_URL = os.environ['EXPO_PUBLIC_BACKEND_URL'].rstrip('/')
+BASE_URL = os.environ.get(
+    "EXPO_PUBLIC_BACKEND_URL",
+    os.environ.get("ATELIER_TEST_URL", "http://localhost:8000"),
+).rstrip("/")
+API_KEY = os.environ.get("ATELIER_TEST_API_KEY", os.environ.get("API_KEY", ""))
 
 
 @pytest.fixture(scope="session")
 def api_client():
     s = requests.Session()
-    s.headers.update({"Content-Type": "application/json"})
+    s.headers.update({"Content-Type": "application/json", "X-API-Key": API_KEY})
     return s
 
 

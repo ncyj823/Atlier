@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # ── API authentication ─────────────────────────────────────────────────────
     # Every /api route (except public share page) requires X-API-Key: <API_KEY>
     api_key: str = ""
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_days: int = 30
 
     # ── OpenAI (NLP schedule parse + Whisper transcription) ────────────────────
     # Previously named EMERGENT_LLM_KEY — same key value, new name.

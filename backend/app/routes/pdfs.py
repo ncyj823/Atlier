@@ -1,6 +1,11 @@
 """
 app/routes/pdfs.py — PDF upload/download/delete for clients and projects.
 
+Role Enforcement:
+  - Owner: Full access to all client & project PDFs.
+  - Employee: Permitted ONLY for assigned clients / projects of assigned clients.
+    Unassigned access returns 403 Forbidden. Automatically logs activity.
+
 Endpoints:
   POST   /api/clients/{client_id}/pdfs
   GET    /api/clients/{client_id}/pdfs/{pdf_id}
@@ -8,14 +13,16 @@ Endpoints:
   POST   /api/projects/{project_id}/pdfs
   DELETE /api/projects/{project_id}/pdfs/{pdf_id}
 """
-import uuid
 import logging
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.auth import AuthContext, get_current_auth
 from app.database import db
 from app.models.common import PDFUpload
+from app.services.activity_logger import log_employee_activity
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["pdfs"])
@@ -28,8 +35,18 @@ def _now_iso() -> str:
 # ── Client PDFs ────────────────────────────────────────────────────────────────
 
 @router.post("/clients/{client_id}/pdfs")
-async def upload_client_pdf(client_id: str, payload: PDFUpload):
-    client_doc = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+async def upload_client_pdf(
+    client_id: str,
+    payload: PDFUpload,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    if not auth.can_access_client(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
+    client_doc = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
     if not client_doc:
         raise HTTPException(status_code=404, detail="Client not found")
 
@@ -42,6 +59,17 @@ async def upload_client_pdf(client_id: str, payload: PDFUpload):
         "uploaded_at": _now_iso(),
     }
     await db.pdfs.insert_one(doc)
+
+    if auth.is_employee:
+        await log_employee_activity(
+            auth=auth,
+            entity_type="pdf",
+            entity_id=doc["id"],
+            client_id=client_id,
+            action=f"uploaded design sheet '{payload.name}' for client {client_doc.get('name')}",
+            details=f"Uploaded design PDF: {payload.name}",
+        )
+
     return {
         "id": doc["id"],
         "name": doc["name"],
@@ -51,7 +79,17 @@ async def upload_client_pdf(client_id: str, payload: PDFUpload):
 
 
 @router.get("/clients/{client_id}/pdfs/{pdf_id}")
-async def get_client_pdf(client_id: str, pdf_id: str):
+async def get_client_pdf(
+    client_id: str,
+    pdf_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    if not auth.can_access_client(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
     p = await db.pdfs.find_one({"id": pdf_id, "client_id": client_id}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="PDF not found")
@@ -59,7 +97,17 @@ async def get_client_pdf(client_id: str, pdf_id: str):
 
 
 @router.delete("/clients/{client_id}/pdfs/{pdf_id}")
-async def delete_client_pdf(client_id: str, pdf_id: str):
+async def delete_client_pdf(
+    client_id: str,
+    pdf_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    if not auth.can_access_client(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
     await db.pdfs.delete_one({"id": pdf_id, "client_id": client_id})
     return {"ok": True}
 
@@ -67,10 +115,20 @@ async def delete_client_pdf(client_id: str, pdf_id: str):
 # ── Project PDFs ───────────────────────────────────────────────────────────────
 
 @router.post("/projects/{project_id}/pdfs")
-async def upload_project_pdf(project_id: str, payload: PDFUpload):
-    p = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1})
+async def upload_project_pdf(
+    project_id: str,
+    payload: PDFUpload,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    p = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "client_id": 1, "title": 1})
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if not auth.can_access_client(p.get("client_id")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this project's client.",
+        )
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -81,6 +139,18 @@ async def upload_project_pdf(project_id: str, payload: PDFUpload):
         "uploaded_at": _now_iso(),
     }
     await db.pdfs.insert_one(doc)
+
+    if auth.is_employee:
+        await log_employee_activity(
+            auth=auth,
+            entity_type="pdf",
+            entity_id=doc["id"],
+            client_id=p.get("client_id"),
+            project_id=project_id,
+            action=f"uploaded design PDF '{payload.name}' for project {p.get('title')}",
+            details=f"Uploaded project PDF: {payload.name}",
+        )
+
     return {
         "id": doc["id"],
         "name": doc["name"],
@@ -90,6 +160,20 @@ async def upload_project_pdf(project_id: str, payload: PDFUpload):
 
 
 @router.delete("/projects/{project_id}/pdfs/{pdf_id}")
-async def delete_project_pdf(project_id: str, pdf_id: str):
+async def delete_project_pdf(
+    project_id: str,
+    pdf_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    p = await db.projects.find_one({"id": project_id}, {"_id": 0, "id": 1, "client_id": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not auth.can_access_client(p.get("client_id")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this project's client.",
+        )
+
     await db.pdfs.delete_one({"id": pdf_id, "project_id": project_id})
     return {"ok": True}

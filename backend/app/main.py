@@ -4,7 +4,9 @@ app/main.py — FastAPI application factory.
 Wires together:
   - Application lifespan (DB connect/disconnect, scheduler start/stop)
   - CORS middleware
-  - All routers (authenticated + public)
+  - Public routes (health, employee login, public share page)
+  - Authenticated routes (Owner + Employee RBAC)
+  - Owner-only admin & financial routes
   - Startup reminder reconciliation
 
 Start with:
@@ -16,16 +18,20 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.auth import require_api_key
+from app.auth import require_api_key, require_owner
 from app.config import settings
 from app.database import close_db, connect_db
 from app.routes import (
+    admin_employees,
+    attendance,
     clients,
+    employee_auth,
     events,
     health,
     invoices,
     pdfs,
     projects,
+    reports,
     seed,
     share,
     transcribe,
@@ -76,17 +82,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Atelier API",
-    description="Fashion freelancer management — clients, projects, invoices, calendar.",
-    version="2.0.0",
+    description="Fashion freelancer management — clients, projects, invoices, calendar, employee tracking.",
+    version="2.1.0",
     lifespan=lifespan,
-    # Disable default /docs and /redoc in production if desired.
-    # docs_url=None, redoc_url=None,
 )
 
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# NOTE: allow_credentials=True + allow_origins=["*"] is rejected by browsers.
-# Set ALLOWED_ORIGINS in .env to a comma-separated list of your frontend origins.
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -99,6 +101,7 @@ app.add_middleware(
 # ── Public (unauthenticated) routes ────────────────────────────────────────────
 app.include_router(health.router)
 app.include_router(share.public_router, prefix="/api")
+app.include_router(employee_auth.router, prefix="/api")
 
 # Root endpoint (preserves existing GET /api/ → {app, ok})
 from fastapi import APIRouter as _APIRouter
@@ -111,14 +114,21 @@ async def root():
 app.include_router(_root)
 
 
-# ── Authenticated routes (all require X-API-Key header) ───────────────────────
-_auth_dep = [Depends(require_api_key)]
+# ── Authenticated Multi-Tier routes (Owner X-API-Key or Employee JWT) ──────────
+# These routes perform internal RBAC checks to enforce assigned client permissions.
+app.include_router(clients.router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
+app.include_router(pdfs.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
+app.include_router(attendance.router, prefix="/api")
+app.include_router(transcribe.router, prefix="/api")
 
-app.include_router(clients.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(pdfs.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(invoices.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(share.auth_router, prefix="/api", dependencies=_auth_dep)
-app.include_router(events.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(projects.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(transcribe.router, prefix="/api", dependencies=_auth_dep)
-app.include_router(seed.router, prefix="/api", dependencies=_auth_dep)
+
+# ── Strictly Owner-Only routes (Invoices, Admin, Reports, Share Gen, Seed) ─────
+_owner_dep = [Depends(require_owner)]
+
+app.include_router(invoices.router, prefix="/api", dependencies=_owner_dep)
+app.include_router(admin_employees.router, prefix="/api", dependencies=_owner_dep)
+app.include_router(reports.router, prefix="/api", dependencies=_owner_dep)
+app.include_router(share.auth_router, prefix="/api", dependencies=_owner_dep)
+app.include_router(seed.router, prefix="/api", dependencies=_owner_dep)

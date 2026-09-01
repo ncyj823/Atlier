@@ -1,23 +1,23 @@
 """
-app/routes/invoices.py — Invoice item CRUD routes.
+app/routes/invoices.py — Invoice item CRUD routes (Owner Only).
+
+All invoice and payment management is restricted strictly to the Owner tier.
+Employees receive 403 Forbidden.
 
 Endpoints:
   POST   /api/clients/{client_id}/invoices/items
   PUT    /api/clients/{client_id}/invoices/items/{item_id}
   DELETE /api/clients/{client_id}/invoices/items/{item_id}
-
-After each mutation, an invoice summary email is sent to the client (if they
-have an email on file). Emails are dispatched as background tasks so the HTTP
-response is not blocked by SMTP.
 """
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from app.auth import AuthContext, require_owner
 from app.database import db
 from app.models.invoice import InvoiceItem, InvoiceItemCreate
-from app.services.email_service import send_email_sync, invoice_html
+from app.services.email_service import invoice_html, send_email_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["invoices"])
@@ -52,6 +52,7 @@ async def add_invoice_item(
     client_id: str,
     payload: InvoiceItemCreate,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(require_owner),
 ):
     item = InvoiceItem(**payload.dict()).dict()
     await db.invoices.update_one(
@@ -72,6 +73,7 @@ async def update_invoice_item(
     item_id: str,
     payload: InvoiceItemCreate,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(require_owner),
 ):
     res = await db.invoices.update_one(
         {"client_id": client_id, "items.id": item_id},
@@ -94,6 +96,7 @@ async def delete_invoice_item(
     client_id: str,
     item_id: str,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(require_owner),
 ):
     await db.invoices.update_one(
         {"client_id": client_id},

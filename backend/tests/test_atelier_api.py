@@ -4,14 +4,15 @@ import pytest
 import requests
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://style-manager-29.preview.emergentagent.com").rstrip("/")
+from tests.conftest import BASE_URL, API_KEY
+
 API = f"{BASE_URL}/api"
 
 
 @pytest.fixture(scope="session")
 def s():
     sess = requests.Session()
-    sess.headers.update({"Content-Type": "application/json"})
+    sess.headers.update({"Content-Type": "application/json", "X-API-Key": API_KEY})
     return sess
 
 
@@ -162,7 +163,7 @@ def test_transcribe_silent_wav():
         w.writeframes(b"\x00\x00" * 16000)  # 1s silence
     audio_bytes = buf.getvalue()
     files = {"audio": ("silent.wav", audio_bytes, "audio/wav")}
-    r = requests.post(f"{API}/transcribe", files=files, timeout=60)
+    r = requests.post(f"{API}/transcribe", files=files, headers={"X-API-Key": API_KEY}, timeout=60)
     assert r.status_code == 200, r.text
     j = r.json()
     assert "text" in j
@@ -171,6 +172,6 @@ def test_transcribe_silent_wav():
 
 def test_transcribe_empty_audio_rejected():
     files = {"audio": ("empty.wav", b"", "audio/wav")}
-    r = requests.post(f"{API}/transcribe", files=files, timeout=20)
+    r = requests.post(f"{API}/transcribe", files=files, headers={"X-API-Key": API_KEY}, timeout=20)
     # Empty data raises 400 per server logic
     assert r.status_code in (400, 422, 500)

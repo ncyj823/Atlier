@@ -1,6 +1,10 @@
 """
 app/routes/events.py — Calendar event routes + NLP schedule parsing.
 
+Role Enforcement:
+  - Owner: Full access to all events and scheduling.
+  - Employee: Permitted for personal events or events of assigned clients.
+
 Endpoints:
   POST /api/schedule/parse           — NLP text → structured event data
   POST /api/events                   — create event
@@ -16,20 +20,21 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from dateutil import parser as date_parser
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
+from app.auth import AuthContext, get_current_auth
+from app.config import settings
 from app.database import db
 from app.models.common import ParseRequest
 from app.models.event import EventCreate, EventOut, EventReschedule
-from app.services import ai_service
-from app.services import google_cal
-from app.services.email_service import send_email_sync, meeting_html
+from app.services import ai_service, google_cal
+from app.services.activity_logger import log_employee_activity
+from app.services.email_service import meeting_html, send_email_sync
 from app.services.scheduler import (
     cancel_event_reminders,
     reminders_for,
     schedule_event_reminders,
 )
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["events"])
@@ -50,7 +55,10 @@ def _mock_meet_link() -> str:
 # ── NLP Parse ─────────────────────────────────────────────────────────────────
 
 @router.post("/schedule/parse")
-async def schedule_parse(payload: ParseRequest):
+async def schedule_parse(
+    payload: ParseRequest,
+    auth: AuthContext = Depends(get_current_auth),
+):
     """
     Convert free-text scheduling intent to structured event data via GPT-4.1.
     Looks up the mentioned client name in MongoDB to attach client_id/email.
@@ -64,19 +72,19 @@ async def schedule_parse(payload: ParseRequest):
         logger.error("schedule/parse failed: %s", exc)
         raise HTTPException(status_code=400, detail=f"Could not parse: {exc}")
 
-    # Match client by name (case-insensitive prefix match)
     client_id = None
     client_email = ""
     if parsed.get("client_name"):
-        m = await db.clients.find_one(
-            {
-                "name": {
-                    "$regex": f"^{re.escape(parsed['client_name'])}",
-                    "$options": "i",
-                }
-            },
-            {"_id": 0},
-        )
+        query = {
+            "name": {
+                "$regex": f"^{re.escape(parsed['client_name'])}",
+                "$options": "i",
+            }
+        }
+        if auth.is_employee:
+            query["id"] = {"$in": auth.assigned_client_ids}
+
+        m = await db.clients.find_one(query, {"_id": 0})
         if m:
             client_id = m["id"]
             client_email = m.get("email", "")
@@ -90,7 +98,17 @@ async def schedule_parse(payload: ParseRequest):
 # ── Events CRUD ────────────────────────────────────────────────────────────────
 
 @router.post("/events", response_model=EventOut)
-async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
+async def create_event(
+    payload: EventCreate,
+    background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    if payload.client_id and not auth.can_access_client(payload.client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
     # Resolve client details
     client_name = ""
     client_email = payload.client_email or ""
@@ -103,7 +121,6 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
 
     reminders = reminders_for(payload.start_iso)
 
-    # Compute end time and timezone for Google Calendar
     try:
         start_dt = date_parser.isoparse(payload.start_iso)
         end_iso = (start_dt + timedelta(minutes=payload.duration_minutes)).isoformat()
@@ -114,7 +131,6 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
         end_iso = payload.start_iso
         tz = "Asia/Kolkata"
 
-    # Try to create a real Google Calendar event + Meet link
     google_event_id = ""
     meet_link = ""
     html_link = ""
@@ -154,10 +170,8 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
     }
     await db.events.insert_one(doc)
 
-    # Schedule email reminders (morning-of / 30 min before / at start)
     schedule_event_reminders(doc["id"], payload.start_iso)
 
-    # Send immediate "scheduled" notification email
     try:
         dt = date_parser.isoparse(payload.start_iso)
         when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")
@@ -175,6 +189,16 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
             send_email_sync, r, f"{doc['title']} — Scheduled", invite_html
         )
 
+    if auth.is_employee:
+        await log_employee_activity(
+            auth=auth,
+            entity_type="event",
+            entity_id=doc["id"],
+            client_id=payload.client_id,
+            action=f"scheduled event '{doc['title']}'",
+            details=f"Scheduled for {payload.start_iso}",
+        )
+
     doc.pop("_id", None)
     return EventOut(**doc)
 
@@ -183,18 +207,41 @@ async def create_event(payload: EventCreate, background_tasks: BackgroundTasks):
 async def list_events(
     from_iso: Optional[str] = None,
     to_iso: Optional[str] = None,
+    auth: AuthContext = Depends(get_current_auth),
 ):
     q: dict = {}
     if from_iso and to_iso:
-        q = {"start_iso": {"$gte": from_iso, "$lte": to_iso}}
+        q["start_iso"] = {"$gte": from_iso, "$lte": to_iso}
+
+    if auth.is_employee:
+        # Show personal events or events for assigned clients
+        assigned_ids = auth.assigned_client_ids or []
+        q["$or"] = [
+            {"client_id": {"$in": assigned_ids}},
+            {"client_id": None},
+            {"client_id": ""},
+        ]
+
     cursor = db.events.find(q, {"_id": 0}).sort("start_iso", 1)
     return [EventOut(**d) async for d in cursor]
 
 
 @router.delete("/events/{event_id}")
-async def delete_event(event_id: str):
+async def delete_event(
+    event_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+):
     ev = await db.events.find_one({"id": event_id}, {"_id": 0})
-    if ev and ev.get("google_event_id"):
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if ev.get("client_id") and not auth.can_access_client(ev.get("client_id")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
+    if ev.get("google_event_id"):
         google_cal.delete_event(ev["google_event_id"])
     cancel_event_reminders(event_id)
     await db.events.delete_one({"id": event_id})
@@ -206,14 +253,20 @@ async def reschedule_event(
     event_id: str,
     payload: EventReschedule,
     background_tasks: BackgroundTasks,
+    auth: AuthContext = Depends(get_current_auth),
 ):
     ev = await db.events.find_one({"id": event_id}, {"_id": 0})
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    if ev.get("client_id") and not auth.can_access_client(ev.get("client_id")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You are not assigned to this client.",
+        )
+
     reminders = reminders_for(payload.start_iso)
 
-    # Update Google Calendar event time
     try:
         new_start = date_parser.isoparse(payload.start_iso)
         new_end = (
@@ -236,10 +289,8 @@ async def reschedule_event(
     ev["start_iso"] = payload.start_iso
     ev["reminders"] = reminders
 
-    # Re-schedule reminder jobs
     schedule_event_reminders(event_id, payload.start_iso)
 
-    # Send reschedule notification emails
     try:
         dt = date_parser.isoparse(payload.start_iso)
         when_human = dt.strftime("%A, %d %b %Y · %I:%M %p %Z")

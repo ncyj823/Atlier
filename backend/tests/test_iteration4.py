@@ -5,11 +5,15 @@ import uuid
 import requests
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
+BASE_URL = os.environ.get(
+    "EXPO_PUBLIC_BACKEND_URL",
+    os.environ.get("ATELIER_TEST_URL", "http://localhost:8000"),
+).rstrip("/")
+API_KEY = os.environ.get("ATELIER_TEST_API_KEY", os.environ.get("API_KEY", ""))
 API = f"{BASE_URL}/api"
 
 S = requests.Session()
-S.headers.update({"Content-Type": "application/json"})
+S.headers.update({"Content-Type": "application/json", "X-API-Key": API_KEY})
 
 
 # ---------- helpers ----------

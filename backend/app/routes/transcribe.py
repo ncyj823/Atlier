@@ -11,8 +11,9 @@ Fails with:
 """
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app.auth import AuthContext, get_current_auth
 from app.config import settings
 from app.services import ai_service
 
@@ -21,7 +22,10 @@ router = APIRouter(tags=["transcribe"])
 
 
 @router.post("/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
+async def transcribe(
+    audio: UploadFile = File(...),
+    auth: AuthContext = Depends(get_current_auth),
+):
     """
     Transcribe uploaded audio using OpenAI Whisper-1.
 
