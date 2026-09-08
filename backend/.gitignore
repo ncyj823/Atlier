@@ -1,2 +1,24 @@
 _old/
 .env
+.env.example
+@"
+# Secrets - never commit
+.env
+backend/.env
+frontend/.env
+backend/_old/
+
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Build output
+dist/
+build/
+.expo/
+
+# OS junk
+.DS_Store
+Thumbs.db
