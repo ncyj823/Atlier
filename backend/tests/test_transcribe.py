@@ -55,7 +55,7 @@ def test_transcribe_silent_wav():
         timeout=60,
     )
     if r.status_code == 500 and "LLM key not configured" in r.text:
-        pytest.skip("OPENAI_API_KEY not configured on this server")
+        pytest.skip("GEMINI_API_KEY not configured on this server")
     assert r.status_code == 200, r.text
     j = r.json()
     assert "text" in j

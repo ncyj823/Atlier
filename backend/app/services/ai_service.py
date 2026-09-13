@@ -1,29 +1,37 @@
-"""
-app/services/ai_service.py — OpenAI integration for NLP schedule parsing and
-Whisper voice transcription.
+﻿"""
+app/services/ai_service.py — Google Gemini integration for NLP schedule parsing
+and voice transcription (replaces OpenAI/Whisper-1).
 
-Previously the app used EMERGENT_LLM_KEY as the env var name. The key value
-is a standard OpenAI API key (sk-proj-...). This module now reads it from
-OPENAI_API_KEY via settings. Behaviour is identical.
+Provider : Google Gemini (gemini-2.0-flash) via the google-genai SDK (v2.x+).
+Key      : GEMINI_API_KEY in .env  =>  settings.gemini_api_key
+Free tier: https://aistudio.google.com/apikey
 
-If OPENAI_BASE_URL is set, requests are routed through that base URL, which
-allows switching to any OpenAI-compatible API provider without code changes.
+Public API (unchanged -- no other file needs to be touched):
+  parse_schedule(text, default_tz)  -> dict
+  transcribe_audio(data, filename, content_type) -> str
+
+Note: The openai_api_key field in config.py is kept for rollback; the route-level
+guards that check it will silently pass (it defaults to "") and the real key
+enforcement happens inside these functions.
 """
+import asyncio
+import base64
 import json
-import re
 import logging
-import tempfile
-import os
+import re
 from datetime import datetime, timezone
 
 import pytz
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types as genai_types
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── NLP system prompt ─────────────────────────────────────────────────────────
+# -- NLP system prompt ---------------------------------------------------------
+# Content is identical to the original OpenAI prompt so scheduling behaviour
+# is preserved exactly.
 _NLP_SYSTEM = """You are a scheduling parser for a fashion freelancer's app. Convert the user's text into strict JSON.
 
 Output ONLY a JSON object with these keys:
@@ -45,17 +53,67 @@ Rules:
 - No prose, no markdown fences. Just raw JSON.
 """
 
+# -- Gemini JSON response schema for parse_schedule ----------------------------
+# Using a schema dict so the model is constrained to the exact structure that
+# events.py expects. This eliminates the risk of Gemini drifting to different
+# field names vs. what OpenAI used to return.
+_SCHEDULE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title":            {"type": "string"},
+        "mode":             {
+            "type": "string",
+            "enum": ["design_call", "measurement_call", "sending_pieces", "personal"],
+        },
+        "client_name":      {"type": "string", "nullable": True},
+        "start_iso":        {"type": "string"},
+        "duration_minutes": {"type": "integer"},
+        "timezone":         {"type": "string"},
+        "notes":            {"type": "string"},
+    },
+    "required": ["title", "mode", "start_iso", "duration_minutes", "timezone", "notes"],
+}
 
-def _get_client() -> AsyncOpenAI:
-    """Return a configured AsyncOpenAI client using OPENAI_API_KEY."""
-    return AsyncOpenAI(
-        api_key=settings.openai_api_key or "unset",
-        base_url=settings.openai_base_url or None,
-    )
+# -- MIME type helpers ---------------------------------------------------------
+_EXT_TO_MIME: dict = {
+    ".m4a":  "audio/mp4",
+    ".mp4":  "audio/mp4",
+    ".mp3":  "audio/mpeg",
+    ".mpeg": "audio/mpeg",
+    ".mpga": "audio/mpeg",
+    ".wav":  "audio/wav",
+    ".webm": "audio/webm",
+    ".ogg":  "audio/ogg",
+}
+_CONTENT_TYPE_NORMALISE: dict = {
+    "audio/m4a":   "audio/mp4",
+    "audio/x-m4a": "audio/mp4",
+    "audio/x-wav": "audio/wav",
+    "audio/mp3":   "audio/mpeg",
+}
+
+
+def _resolve_audio_mime(filename: str, content_type: str) -> str:
+    """Return a Gemini-accepted MIME type from filename extension or Content-Type."""
+    if "." in (filename or ""):
+        ext = "." + filename.rsplit(".", 1)[-1].lower()
+        if ext in _EXT_TO_MIME:
+            return _EXT_TO_MIME[ext]
+    ct = (content_type or "").lower()
+    return _CONTENT_TYPE_NORMALISE.get(ct, ct or "audio/mp4")
+
+
+def _get_client() -> genai.Client:
+    """Return a configured Gemini Client."""
+    return genai.Client(api_key=settings.gemini_api_key)
 
 
 def _extract_json(text: str) -> dict:
-    """Strip optional ```json fences and parse the first JSON object found."""
+    """Strip optional ```json fences and parse the first JSON object found.
+
+    Kept as a safety-net fallback even though Gemini JSON mode returns clean
+    JSON -- defensive parsing is cheap insurance.
+    """
     text = text.strip()
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
@@ -63,94 +121,96 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+# -- Public API ----------------------------------------------------------------
+
 async def parse_schedule(text: str, default_tz: str = "Asia/Kolkata") -> dict:
     """
-    Send a free-text scheduling request to GPT-4.1 and return the parsed
+    Send a free-text scheduling request to Gemini and return the parsed
     JSON dict containing title, mode, start_iso, duration_minutes, etc.
 
+    The JSON schema is enforced via Gemini response_mime_type + response_schema
+    so the output structure matches exactly what the rest of the app expects.
+
     Raises:
-        RuntimeError — if OPENAI_API_KEY is not configured
-        ValueError   — if the LLM response cannot be parsed as JSON
-        Exception    — any OpenAI API error (passed through)
+        RuntimeError -- if GEMINI_API_KEY is not configured
+        ValueError   -- if the LLM response cannot be parsed as JSON
+        Exception    -- any Gemini API error (passed through to the route handler)
     """
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
+    if not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
 
     now_human = (
         datetime.now(timezone.utc)
         .astimezone(pytz.timezone(default_tz))
         .isoformat()
     )
-    sys_msg = (
-        f"{_NLP_SYSTEM}\n\n"
+    user_prompt = (
         f"CURRENT_DATETIME: {now_human}\n"
-        f"DEFAULT_TIMEZONE: {default_tz}"
+        f"DEFAULT_TIMEZONE: {default_tz}\n\n"
+        f"{text}"
     )
 
     client = _get_client()
-    response = await client.responses.create(
-        model="gpt-4.1",
-        input=[
-            {"role": "system", "content": sys_msg},
-            {"role": "user", "content": text},
-        ],
+
+    # Gemini SDK is synchronous -- run in a thread to keep FastAPI non-blocking.
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model="gemini-2.0-flash",
+        contents=user_prompt,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=_NLP_SYSTEM,
+            response_mime_type="application/json",
+            response_schema=_SCHEDULE_SCHEMA,
+        ),
     )
-    return _extract_json(response.output_text)
+
+    raw = response.text or ""
+    logger.debug("Gemini parse_schedule raw response: %s", raw[:500])
+    return _extract_json(raw)
 
 
 async def transcribe_audio(data: bytes, filename: str, content_type: str) -> str:
     """
-    Send audio bytes to OpenAI Whisper-1 and return the transcription text.
+    Send audio bytes to Gemini (gemini-2.0-flash) and return the transcription.
+
+    Audio is uploaded as inline bytes via Part.from_bytes() -- no temp files.
+    Gemini multimodal audio understanding replaces OpenAI Whisper-1.
 
     Args:
-        data         — raw audio bytes
-        filename     — original filename (used to pick file extension)
-        content_type — MIME type (fallback for extension detection)
+        data         -- raw audio bytes
+        filename     -- original filename (used to detect file extension / MIME)
+        content_type -- MIME type (fallback when extension is absent or unknown)
 
     Returns:
         Transcription text string (may be empty for silent audio).
 
     Raises:
-        RuntimeError — if OPENAI_API_KEY is not configured
-        ValueError   — if data is empty
-        Exception    — any OpenAI API error (passed through)
+        RuntimeError -- if GEMINI_API_KEY is not configured
+        ValueError   -- if data is empty
+        Exception    -- any Gemini API error (passed through to the route handler)
     """
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
+    if not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
 
     if not data:
         raise ValueError("Empty audio data")
 
-    # Resolve file extension from filename or MIME type
-    _suffix_map = {
-        "audio/m4a": ".m4a", "audio/x-m4a": ".m4a", "audio/mp4": ".m4a",
-        "audio/mpeg": ".mp3", "audio/mp3": ".mp3",
-        "audio/wav": ".wav", "audio/x-wav": ".wav",
-        "audio/webm": ".webm", "audio/ogg": ".webm",
-    }
-    ext = ""
-    if "." in (filename or ""):
-        ext = "." + filename.rsplit(".", 1)[-1].lower()
-    if ext not in {".m4a", ".mp3", ".wav", ".webm", ".mp4", ".mpeg", ".mpga"}:
-        ext = _suffix_map.get(content_type or "", ".m4a")
+    mime = _resolve_audio_mime(filename, content_type)
 
     client = _get_client()
 
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            tmp.write(data)
-            tmp_path = tmp.name
+    # Gemini SDK is synchronous -- run in a thread to keep FastAPI non-blocking.
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model="gemini-2.0-flash",
+        contents=[
+            genai_types.Part.from_bytes(data=data, mime_type=mime),
+            "Transcribe the speech in this audio clip. "
+            "Return only the spoken words, verbatim. "
+            "If the audio is silent or contains no speech, return an empty string.",
+        ],
+    )
 
-        with open(tmp_path, "rb") as fh:
-            transcription = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=fh,
-            )
-        return transcription.text.strip()
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+    raw = (response.text or "").strip()
+    logger.debug("Gemini transcribe_audio response length: %d chars", len(raw))
+    return raw

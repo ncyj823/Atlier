@@ -29,11 +29,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiration_days: int = 30
 
-    # ── OpenAI (NLP schedule parse + Whisper transcription) ────────────────────
+    # ── OpenAI (kept for rollback; no longer used by ai_service) ──────────────
     # Previously named EMERGENT_LLM_KEY — same key value, new name.
     openai_api_key: str = ""
     # Optional: override base URL if using an OpenAI-compatible proxy/provider.
     openai_base_url: str = ""
+
+    # ── Google Gemini (NLP schedule parse + voice transcription) ──────────────
+    # Get your free API key at: https://aistudio.google.com/apikey
+    gemini_api_key: str = ""
 
     # ── Email (Gmail SMTP) ─────────────────────────────────────────────────────
     gmail_user: str = ""
