@@ -93,6 +93,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https://atlier.*-ncyj823s-projects\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
