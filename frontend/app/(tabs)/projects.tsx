@@ -37,6 +37,13 @@ export default function ProjectsScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [clientModal, setClientModal] = useState(false);
+  const [clientForm, setClientForm] = useState({
+    name: "", whatsapp: "", email: "", notes: "",
+  });
+  const [savingClient, setSavingClient] = useState(false);
+  const [clientError, setClientError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -81,9 +88,21 @@ export default function ProjectsScreen() {
           <Text style={styles.kicker}>Atelier · Projects</Text>
           <Text style={styles.h1} testID="projects-title">Workbench</Text>
         </View>
-        <Pressable testID="open-create-project" onPress={openCreate} style={styles.headerBtn}>
-          <Feather name="plus" color={colors.onSurface} size={18} />
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <Pressable testID="open-create-client" onPress={() => {
+            setClientForm({ name: "", whatsapp: "", email: "", notes: "" });
+            setClientError(null);
+            setClientModal(true);
+          }} style={styles.headerBtn}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Feather name="user-plus" color={colors.onSurface} size={16} />
+              <Text style={{ fontSize: 12, fontFamily: "Georgia", color: colors.onSurface }}>New Client</Text>
+            </View>
+          </Pressable>
+          <Pressable testID="open-create-project" onPress={openCreate} style={styles.headerBtn}>
+            <Feather name="plus" color={colors.onSurface} size={18} />
+          </Pressable>
+        </View>
       </View>
 
       {loading ? (
@@ -167,7 +186,21 @@ export default function ProjectsScreen() {
               <Text style={styles.kicker}>New Project</Text>
               <Text style={styles.sheetTitle}>Add to your workbench</Text>
 
-              <Text style={styles.fieldLabel}>Client</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={styles.fieldLabel}>Client</Text>
+                <Pressable
+                  testID="open-create-client-from-picker"
+                  onPress={() => {
+                    setClientForm({ name: "", whatsapp: "", email: "", notes: "" });
+                    setClientError(null);
+                    setClientModal(true);
+                  }}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                >
+                  <Feather name="plus" size={14} color={colors.brand} />
+                  <Text style={{ fontSize: 12, color: colors.brand, fontFamily: "Georgia" }}>New Client</Text>
+                </Pressable>
+              </View>
               <Pressable testID="pick-client" onPress={() => setPickerOpen(!pickerOpen)} style={styles.pickerBtn}>
                 <Text style={[styles.pickerText, !selectedClient && { color: colors.onSurfaceTertiary }]}>
                   {selectedClient ? selectedClient.name : "Select a client"}
@@ -177,7 +210,7 @@ export default function ProjectsScreen() {
               {pickerOpen && (
                 <View style={styles.pickerDropdown}>
                   {clients.length === 0 ? (
-                    <Text style={styles.empty}>No clients yet. Create one from a project's client tag.</Text>
+                    <Text style={styles.empty}>No clients yet. Tap + to add your first one.</Text>
                   ) : (
                     clients.map((c) => (
                       <Pressable
@@ -221,6 +254,61 @@ export default function ProjectsScreen() {
                   {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Create project</Text>}
                 </Pressable>
                 <Pressable onPress={() => setModal(false)} style={styles.ghostBtn}>
+                  <Text style={styles.ghostBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={clientModal} animationType="slide" transparent onRequestClose={() => setClientModal(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Pressable style={styles.backdrop} onPress={() => setClientModal(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
+            <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+              <Text style={styles.kicker}>New Client</Text>
+              <Text style={styles.sheetTitle}>Add a client</Text>
+
+              <Field label="Name (required)" value={clientForm.name} onChangeText={(v: string) => { setClientForm({ ...clientForm, name: v }); setClientError(null); }} testID="field-client-name" />
+              <Field label="WhatsApp / Phone" value={clientForm.whatsapp} onChangeText={(v: string) => setClientForm({ ...clientForm, whatsapp: v })} keyboardType="phone-pad" testID="field-client-whatsapp" />
+              <Field label="Email" value={clientForm.email} onChangeText={(v: string) => setClientForm({ ...clientForm, email: v })} keyboardType="email-address" testID="field-client-email" />
+              <Field label="Notes" value={clientForm.notes} onChangeText={(v: string) => setClientForm({ ...clientForm, notes: v })} multiline testID="field-client-notes" />
+
+              {clientError && <Text style={styles.errorText} testID="client-error">{clientError}</Text>}
+
+              <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+                <Pressable
+                  testID="save-client"
+                  onPress={async () => {
+                    if (!clientForm.name.trim()) {
+                      setClientError("Name is required");
+                      return;
+                    }
+                    setSavingClient(true);
+                    setClientError(null);
+                    try {
+                      const created = await api.createClient({
+                        name: clientForm.name.trim(),
+                        whatsapp: clientForm.whatsapp.trim() || undefined,
+                        email: clientForm.email.trim() || undefined,
+                        notes: clientForm.notes.trim() || undefined,
+                      });
+                      await load();
+                      setForm(f => ({ ...f, client_id: created.id }));
+                      setClientModal(false);
+                    } catch (e: any) {
+                      setClientError(e.message || "Failed to create client");
+                    } finally {
+                      setSavingClient(false);
+                    }
+                  }}
+                  disabled={savingClient}
+                  style={[styles.primaryBtn, savingClient && { opacity: 0.5 }]}
+                >
+                  {savingClient ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Create Client</Text>}
+                </Pressable>
+                <Pressable onPress={() => setClientModal(false)} style={styles.ghostBtn}>
                   <Text style={styles.ghostBtnText}>Cancel</Text>
                 </Pressable>
               </View>
@@ -288,6 +376,7 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(26,25,24,0.4)" },
   sheet: { backgroundColor: colors.surface, marginTop: "auto", maxHeight: "94%", borderTopWidth: 1, borderColor: colors.borderStrong },
   sheetTitle: { fontFamily: "Georgia", fontSize: 24, color: colors.onSurface, marginBottom: spacing.sm },
+  errorText: { color: colors.error, fontSize: 13, marginTop: spacing.sm },
 
   fieldLabel: { letterSpacing: 1.5, textTransform: "uppercase", fontSize: 10, color: colors.onSurfaceTertiary },
   fieldInput: { borderBottomWidth: 1, borderColor: colors.borderStrong, paddingVertical: 8, fontSize: 16, color: colors.onSurface, fontFamily: "Georgia" },
