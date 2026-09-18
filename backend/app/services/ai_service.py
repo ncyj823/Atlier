@@ -1,8 +1,8 @@
-﻿"""
+"""
 app/services/ai_service.py — Google Gemini integration for NLP schedule parsing
 and voice transcription (replaces OpenAI/Whisper-1).
 
-Provider : Google Gemini (gemini-2.0-flash) via the google-genai SDK (v2.x+).
+Provider : Google Gemini (gemini-3.6-flash) via the google-genai SDK (v2.x+).
 Key      : GEMINI_API_KEY in .env  =>  settings.gemini_api_key
 Free tier: https://aistudio.google.com/apikey
 
@@ -155,7 +155,7 @@ async def parse_schedule(text: str, default_tz: str = "Asia/Kolkata") -> dict:
     # Gemini SDK is synchronous -- run in a thread to keep FastAPI non-blocking.
     response = await asyncio.to_thread(
         client.models.generate_content,
-        model="gemini-2.0-flash",
+        model="gemini-3.6-flash",
         contents=user_prompt,
         config=genai_types.GenerateContentConfig(
             system_instruction=_NLP_SYSTEM,
@@ -171,7 +171,7 @@ async def parse_schedule(text: str, default_tz: str = "Asia/Kolkata") -> dict:
 
 async def transcribe_audio(data: bytes, filename: str, content_type: str) -> str:
     """
-    Send audio bytes to Gemini (gemini-2.0-flash) and return the transcription.
+    Send audio bytes to Gemini (gemini-3.6-flash) and return the transcription.
 
     Audio is uploaded as inline bytes via Part.from_bytes() -- no temp files.
     Gemini multimodal audio understanding replaces OpenAI Whisper-1.
@@ -202,7 +202,7 @@ async def transcribe_audio(data: bytes, filename: str, content_type: str) -> str
     # Gemini SDK is synchronous -- run in a thread to keep FastAPI non-blocking.
     response = await asyncio.to_thread(
         client.models.generate_content,
-        model="gemini-2.0-flash",
+        model="gemini-3.6-flash",
         contents=[
             genai_types.Part.from_bytes(data=data, mime_type=mime),
             "Transcribe the speech in this audio clip. "
