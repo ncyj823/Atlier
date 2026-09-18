@@ -24,6 +24,9 @@ class EmployeeMonthlyReport(BaseModel):
     total_hours: float = 0.0
     days_worked: int = 0
     total_activities: int = 0
+    tasks_pending: int = 0
+    tasks_in_progress: int = 0
+    tasks_completed: int = 0
     daily_breakdown: List[DayActivitySummary] = []
 
 

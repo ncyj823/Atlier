@@ -124,6 +124,12 @@ async def get_monthly_report(
         emp_total_hours = round(emp_total_minutes / 60.0, 2)
         grand_total_hours += emp_total_hours
 
+        # Count tasks
+        tasks = await db.tasks.find({"assigned_employee_id": emp_id}, {"_id": 0, "status": 1}).to_list(length=None)
+        tasks_pending = sum(1 for t in tasks if t.get("status") == "pending")
+        tasks_in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
+        tasks_completed = sum(1 for t in tasks if t.get("status") == "completed")
+
         employee_reports.append(
             EmployeeMonthlyReport(
                 employee_id=emp_id,
@@ -134,6 +140,9 @@ async def get_monthly_report(
                 total_hours=emp_total_hours,
                 days_worked=len([day for day in daily_breakdowns if day.total_minutes > 0 or day.sessions]),
                 total_activities=len(act_logs),
+                tasks_pending=tasks_pending,
+                tasks_in_progress=tasks_in_progress,
+                tasks_completed=tasks_completed,
                 daily_breakdown=daily_breakdowns,
             )
         )
