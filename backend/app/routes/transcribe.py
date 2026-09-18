@@ -32,7 +32,7 @@ async def transcribe(
     Accepts common audio formats: m4a, mp3, wav, webm, mp4.
     Returns the transcription text (may be empty for silent audio).
     """
-    if not settings.openai_api_key:
+    if not settings.gemini_api_key:
         raise HTTPException(status_code=500, detail="LLM key not configured")
 
     data = await audio.read()

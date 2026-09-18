@@ -63,7 +63,7 @@ async def schedule_parse(
     Convert free-text scheduling intent to structured event data via GPT-4.1.
     Looks up the mentioned client name in MongoDB to attach client_id/email.
     """
-    if not settings.openai_api_key:
+    if not settings.gemini_api_key:
         raise HTTPException(status_code=500, detail="LLM key not configured")
 
     try:
