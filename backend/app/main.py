@@ -32,8 +32,10 @@ from app.routes import (
     pdfs,
     projects,
     reports,
+    salary,
     seed,
     share,
+    tasks,
     transcribe,
 )
 from app.services.scheduler import reconcile_reminders_on_startup, scheduler
@@ -93,7 +95,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=settings.cors_origins,
-    allow_origin_regex=r"https://atlier.*-ncyj823s-projects\.vercel\.app",
+    allow_origin_regex=r"https://atlier.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -123,6 +125,7 @@ app.include_router(pdfs.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(attendance.router, prefix="/api")
 app.include_router(transcribe.router, prefix="/api")
+app.include_router(tasks.router, prefix="/api")
 
 
 # ── Strictly Owner-Only routes (Invoices, Admin, Reports, Share Gen, Seed) ─────
@@ -131,5 +134,6 @@ _owner_dep = [Depends(require_owner)]
 app.include_router(invoices.router, prefix="/api", dependencies=_owner_dep)
 app.include_router(admin_employees.router, prefix="/api", dependencies=_owner_dep)
 app.include_router(reports.router, prefix="/api", dependencies=_owner_dep)
+app.include_router(salary.router, prefix="/api", dependencies=_owner_dep)
 app.include_router(share.auth_router, prefix="/api", dependencies=_owner_dep)
 app.include_router(seed.router, prefix="/api", dependencies=_owner_dep)

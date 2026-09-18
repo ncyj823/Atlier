@@ -75,7 +75,12 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         origins = [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
-        return origins or ["http://localhost:3000"]
+        default_origins = [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://atlier-sigma.vercel.app"
+        ]
+        return list(set(origins + default_origins))
 
     @property
     def google_configured(self) -> bool:
